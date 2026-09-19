@@ -1,0 +1,53 @@
+{
+  "name": "agent-task-network",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24.10.0 <25",
+    "pnpm": ">=10 <11"
+  },
+  "scripts": {
+    "generate": "node scripts/generate-contracts.mjs && tsx scripts/generate-schemas.ts",
+    "artifacts:check": "node scripts/generate-contracts.mjs --check && tsx scripts/generate-schemas.ts --check",
+    "build": "pnpm generate && pnpm -r build",
+    "typecheck": "pnpm -r typecheck && tsc -p tsconfig.tools.json --noEmit",
+    "test": "tsx --test packages/protocol/test/*.test.ts tests/*.test.ts",
+    "check": "pnpm artifacts:check && pnpm -r build && pnpm typecheck && pnpm contracts:test && pnpm test",
+    "setup:tools": "node scripts/setup-foundry.mjs",
+    "contracts:build": "node scripts/foundry.mjs forge build --root contracts",
+    "contracts:test": "node scripts/foundry.mjs forge test --root contracts -v",
+    "demo": "node scripts/demo.mjs",
+    "testnet:preflight": "tsx scripts/testnet-preflight.ts",
+    "testnet:deploy": "tsx scripts/deploy-testnet.ts",
+    "testnet:prepare": "tsx scripts/prepare-testnet.ts",
+    "testnet:funding": "tsx scripts/prepare-testnet.ts --check",
+    "model:serve": "node scripts/local-model.mjs serve",
+    "model:pull": "node scripts/local-model.mjs pull",
+    "model:config": "node scripts/local-model.mjs config",
+    "model:verify": "tsx scripts/verify-live-model.ts",
+    "testnet:start": "node scripts/testnet-services.mjs",
+    "testnet:happy": "tsx scripts/testnet-happy.ts",
+    "testnet:faults": "tsx scripts/testnet-faults.ts",
+    "dashboard:publish": "tsx scripts/publish-dashboard.ts",
+    "release:check": "node scripts/check-release.mjs"
+  },
+  "devDependencies": {
+    "@agent-task/accounts": "workspace:*",
+    "@agent-task/contracts": "workspace:*",
+    "@agent-task/protocol": "workspace:*",
+    "@agent-task/runtime": "workspace:*",
+    "@agent-task/workspace": "workspace:*",
+    "@ethereumjs/vm": "10.1.3",
+    "@metamask/smart-accounts-kit": "2.0.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@openzeppelin/contracts": "5.6.1",
+    "@types/node": "24.10.1",
+    "solc": "0.8.37",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "viem": "2.56.8",
+    "zod": "4.3.6"
+  }
+}

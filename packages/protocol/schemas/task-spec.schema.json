@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:agent-task:0.1:task-spec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "settlementChainId",
+    "taskManager",
+    "requester",
+    "clientRequestId",
+    "capability",
+    "capabilityVersion",
+    "title",
+    "instructions",
+    "input",
+    "outputSchema",
+    "reward",
+    "execution",
+    "verification"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "agent-task/0.1"
+    },
+    "settlementChainId": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 78
+    },
+    "taskManager": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{40}$",
+      "not": {
+        "const": "0x0000000000000000000000000000000000000000"
+      }
+    },
+    "requester": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{40}$",
+      "not": {
+        "const": "0x0000000000000000000000000000000000000000"
+      }
+    },
+    "clientRequestId": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{64}$",
+      "not": {
+        "const": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$",
+      "maxLength": 96
+    },
+    "capabilityVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "maxLength": 32
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 16384
+    },
+    "input": {
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "reward": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token",
+        "amountBaseUnits"
+      ],
+      "properties": {
+        "token": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{40}$",
+          "not": {
+            "const": "0x0000000000000000000000000000000000000000"
+          }
+        },
+        "amountBaseUnits": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 78
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskDeadline",
+        "claimLeaseSeconds",
+        "reviewWindowSeconds"
+      ],
+      "properties": {
+        "taskDeadline": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "claimLeaseSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "reviewWindowSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 1800
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "profileVersion",
+        "criteria",
+        "unverifiableAction"
+      ],
+      "properties": {
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "profileVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "maxLength": 32
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "unverifiableAction": {
+          "const": "reject"
+        }
+      }
+    }
+  }
+}

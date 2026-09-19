@@ -1,0 +1,556 @@
+[
+  {
+    "inputs": [],
+    "name": "InvalidAuthorization",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidTaskAuthority",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotOwner",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "clientRequestId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "RequestIdConflict",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "RewardExceedsLimit",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SessionBudgetExceeded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "SessionTooShort",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "UnauthorizedAgent",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "VaultPaused",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "agent",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "epoch",
+        "type": "uint64"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint64",
+            "name": "validAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "validUntil",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint128",
+            "name": "maxPerTask",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "maxTotalCommitment",
+            "type": "uint128"
+          }
+        ],
+        "indexed": false,
+        "internalType": "struct TaskTypes.AuthorizationParams",
+        "name": "params",
+        "type": "tuple"
+      }
+    ],
+    "name": "AgentAuthorized",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "agent",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "epoch",
+        "type": "uint64"
+      }
+    ],
+    "name": "AgentRevoked",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "sender",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "Deposited",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "paused",
+        "type": "bool"
+      }
+    ],
+    "name": "PausedChanged",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "operator",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "epoch",
+        "type": "uint64"
+      }
+    ],
+    "name": "TaskAuthorityRecorded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "Withdrawn",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint64",
+        "name": "expectedAttempt",
+        "type": "uint64"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedResultHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "acceptResult",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "agent",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "uint64",
+            "name": "validAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "validUntil",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint128",
+            "name": "maxPerTask",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "maxTotalCommitment",
+            "type": "uint128"
+          }
+        ],
+        "internalType": "struct TaskTypes.AuthorizationParams",
+        "name": "params",
+        "type": "tuple"
+      }
+    ],
+    "name": "authorizeAgent",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      }
+    ],
+    "name": "cancelTask",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bytes32",
+        "name": "clientRequestId",
+        "type": "bytes32"
+      },
+      {
+        "components": [
+          {
+            "internalType": "bytes32",
+            "name": "capabilityId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "specHash",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "specURI",
+            "type": "string"
+          },
+          {
+            "internalType": "uint128",
+            "name": "rewardAmount",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint64",
+            "name": "taskDeadline",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint32",
+            "name": "claimLeaseSeconds",
+            "type": "uint32"
+          },
+          {
+            "internalType": "uint32",
+            "name": "reviewWindowSeconds",
+            "type": "uint32"
+          }
+        ],
+        "internalType": "struct TaskTypes.CreateTaskParams",
+        "name": "params",
+        "type": "tuple"
+      }
+    ],
+    "name": "createTask",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "deposit",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "agent",
+        "type": "address"
+      }
+    ],
+    "name": "getAuthorization",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "bool",
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "validAfter",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint64",
+            "name": "validUntil",
+            "type": "uint64"
+          },
+          {
+            "internalType": "uint128",
+            "name": "maxPerTask",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "maxTotalCommitment",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "committed",
+            "type": "uint128"
+          }
+        ],
+        "internalType": "struct TaskTypes.AgentAuthorization",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      }
+    ],
+    "name": "getTaskAuthority",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "operator",
+            "type": "address"
+          },
+          {
+            "internalType": "uint64",
+            "name": "epoch",
+            "type": "uint64"
+          }
+        ],
+        "internalType": "struct TaskTypes.TaskAuthority",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "owner",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "paused",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint64",
+        "name": "expectedAttempt",
+        "type": "uint64"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedResultHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "reasonHash",
+        "type": "bytes32"
+      }
+    ],
+    "name": "rejectResult",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "agent",
+        "type": "address"
+      }
+    ],
+    "name": "revokeAgent",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "bool",
+        "name": "value",
+        "type": "bool"
+      }
+    ],
+    "name": "setPaused",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "settlementToken",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "taskManager",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      }
+    ],
+    "name": "withdraw",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

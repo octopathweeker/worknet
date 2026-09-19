@@ -1,0 +1,101 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
+import { readFileSync } from 'node:fs';
+import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { createPublicClient, createWalletClient, http, bytesToHex, erc20Abi, type Address } from 'viem';
+import { monadTestnet } from 'viem/chains';
+import { mnemonicToAccount } from 'viem/accounts';
+import { requesterVaultAbi, taskManagerAbi } from '@agent-task/contracts';
+import { factoryAbi } from '@agent-task/accounts';
+import { PlatformCoordinator } from '../apps/object-store/src/platform-coordinator.js';
+import { platformApi } from '../apps/object-store/src/platform-api.js';
+import { makeTask } from '../apps/object-store/src/platform-domain.js';
+import type { Env } from '../apps/object-store/src/index.js';
+
+test('two-user cloud coordinator survives signed transaction crash and settles independently on local Monad', { timeout: 120000 }, async () => {
+  const server = createServer(); await new Promise<void>(r => server.listen(0, '127.0.0.1', r)); const port = (server.address() as { port: number }).port; await new Promise<void>(r => server.close(() => r()));
+  const anvil = spawn('.tools/foundry/anvil', ['--network', 'monad', '--hardfork', 'MonadNine', '--chain-id', '10143', '--block-time', '1', '--port', String(port), '--silent'], { stdio: 'ignore' });
+  const rpc = `http://127.0.0.1:${port}`; const nativeFetch = globalThis.fetch;
+  const db = new DatabaseSync(':memory:'); db.exec(readFileSync('apps/object-store/schema.sql', 'utf8')); db.exec(readFileSync('apps/object-store/platform-schema.sql', 'utf8'));
+  const accounts = Array.from({ length: 5 }, (_, addressIndex) => mnemonicToAccount('test test test test test test test test test test test junk', { addressIndex }));
+  const client = createPublicClient({ chain: monadTestnet, transport: http(rpc), pollingInterval: 100 });
+  const wallets = accounts.map(account => createWalletClient({ chain: monadTestnet, account, transport: http(rpc) }));
+  try {
+    for (let i = 0; ; i++) { try { await client.getChainId(); break; } catch { if (i > 40) throw new Error('anvil startup timeout'); await new Promise(r => setTimeout(r, 100)); } }
+    async function deploy(name: string, args: unknown[] = []) { const artifact = JSON.parse(readFileSync(`contracts/out/${name}.sol/${name}.json`, 'utf8')); const hash = await wallets[0]!.deployContract({ abi: artifact.abi, bytecode: artifact.bytecode.object, args }); const receipt = await client.waitForTransactionReceipt({ hash }); assert.equal(receipt.status, 'success'); return receipt.contractAddress!; }
+    const token = await deploy('MockUSDC'); const manager = await deploy('TaskManager', [token]); const factory = await deploy('RequesterVaultFactory', [manager, token]);
+    const vaults: Address[] = [];
+    for (const i of [3, 4]) {
+      let hash = await wallets[0]!.writeContract({ address: token, abi: [...erc20Abi, { type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }], outputs: [] }], functionName: 'mint', args: [accounts[i]!.address, 1000000n] }); await client.waitForTransactionReceipt({ hash });
+      hash = await wallets[i]!.writeContract({ address: factory, abi: factoryAbi, functionName: 'createVault', args: [accounts[i]!.address] }); await client.waitForTransactionReceipt({ hash });
+      const vault = await client.readContract({ address: factory, abi: factoryAbi, functionName: 'vaultOf', args: [accounts[i]!.address] }); vaults.push(vault);
+      hash = await wallets[i]!.writeContract({ address: token, abi: erc20Abi, functionName: 'approve', args: [vault, 500000n] }); await client.waitForTransactionReceipt({ hash });
+      hash = await wallets[i]!.writeContract({ address: vault, abi: requesterVaultAbi, functionName: 'deposit', args: [500000n] }); await client.waitForTransactionReceipt({ hash });
+      const now = (await client.getBlock()).timestamp;
+      hash = await wallets[i]!.writeContract({ address: vault, abi: requesterVaultAbi, functionName: 'authorizeAgent', args: [accounts[1]!.address, { validAfter: 0n, validUntil: now + 86400n, maxPerTask: 200000n, maxTotalCommitment: 500000n }] }); await client.waitForTransactionReceipt({ hash });
+    }
+    globalThis.fetch = async (input, init) => {
+      if (!String(input).startsWith('https://platform-rpc.test')) return nativeFetch(input, init);
+      const payload = JSON.parse(String(init?.body));
+      // Local Anvil does not model Monad consensus finality. The Testnet suite verifies real finalized reads.
+      if (payload.method === 'eth_getBlockByNumber' && payload.params[0] === 'finalized') payload.params[0] = 'latest';
+      if (payload.method === 'eth_call' && payload.params[1] === 'finalized') payload.params[1] = 'latest';
+      return nativeFetch(rpc, { ...init, body: JSON.stringify(payload) });
+    };
+    const memory = new Map<string, unknown>(); let crash = true; let crashed = false;
+    const ctx = { storage: {
+      async get(key: string) { return structuredClone(memory.get(key)); },
+      async list(options: { prefix: string; limit: number; startAfter?: string }) { return new Map([...memory.entries()].filter(([key]) => key.startsWith(options.prefix) && (!options.startAfter || key > options.startAfter)).sort(([a],[b]) => a.localeCompare(b)).slice(0, options.limit).map(([key,value]) => [key,structuredClone(value)])); },
+      async put(key: string | Record<string, unknown>, value?: unknown) { if ((typeof key === 'string' && key.startsWith('tx:operator:launch:') && (value as any)?.status === 'confirmed' || typeof key !== 'string' && Object.entries(key).some(([k,v]) => k.startsWith('tx:operator:launch:') && (v as any)?.status === 'confirmed')) && crash) { crash = false; crashed = true; throw new Error('injected process loss after mined transaction'); } if (typeof key === 'string') memory.set(key, structuredClone(value)); else for (const [k,v] of Object.entries(key)) memory.set(k, structuredClone(v)); },
+      async delete(key: string) { memory.delete(key); }, async setAlarm(value: number) { memory.set('alarm', value); }, async getAlarm() { return memory.get('alarm') ?? null; },
+    } };
+    let coordinator: PlatformCoordinator;
+    const env: Env = {
+      PLATFORM_CONFIG: JSON.stringify({ chainId: 10143, token, manager, factory, operator: accounts[1]!.address, worker: accounts[2]!.address, sponsor: accounts[0]!.address, deploymentBlock: '0', rpcUrl: 'https://platform-rpc.test', storageUrl: 'https://platform.test' }),
+      PLATFORM_OPERATOR_KEY: bytesToHex(accounts[1]!.getHdKey().privateKey!), PLATFORM_WORKER_KEY: bytesToHex(accounts[2]!.getHdKey().privateKey!), PLATFORM_SPONSOR_KEY: bytesToHex(accounts[0]!.getHdKey().privateKey!),
+      PLATFORM: { idFromName: () => 'one', get: () => ({ fetch: (url: string, init: RequestInit) => coordinator.fetch(new Request(url, init)) }) } as any,
+      DB: { prepare(sql) { let values: SQLInputValue[] = []; return { bind(...args) { values = args as SQLInputValue[]; return this; }, async first<T>() { return (db.prepare(sql).get(...values) ?? null) as T | null; }, async run() { return db.prepare(sql).run(...values); } }; } },
+    };
+    coordinator = new PlatformCoordinator(ctx as any, env);
+    const api = (route: string, body?: unknown, cookie = '') => platformApi(new Request(`https://platform.test/platform/${route}`, { ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }), headers: { origin: 'https://platform.test', 'content-type': 'application/json', cookie } }), env);
+    const cookies: string[] = []; const commands: string[] = [];
+    for (const i of [3,4]) {
+      const challenge = await (await api('auth/challenge', { address: accounts[i]!.address })).json() as any;
+      const login = await api('auth/verify', { id: challenge.id, signature: await accounts[i]!.signMessage({ message: challenge.message }) }); assert.equal(login.status, 200); const cookie = login.headers.get('set-cookie')!.split(';')[0]!; cookies.push(cookie);
+      const id = crypto.randomUUID(); const input = { id, goal: `独立用户 ${i} 的确定性转账统计任务`, kind: 'analysis', reward: '50000', fromBlock: '1', toBlock: '2' };
+      assert.equal((await api('plans', input, cookie)).status, 200);
+      const command = { id: crypto.randomUUID(), goalId: id }; commands.push(command.id);
+      assert.equal((await api('launch', command, cookie)).status, 202); assert.equal((await api('launch', command, cookie)).status, 202);
+    }
+    const expired = JSON.parse(String(db.prepare('SELECT body FROM platform_goals LIMIT 1').get()!.body)); expired.id = crypto.randomUUID(); expired.input.id = expired.id;
+    const head = await client.getBlock(); expired.spec = makeTask(expired, JSON.parse(env.PLATFORM_CONFIG!), Number(head.timestamp) - 7200, head.number);
+    db.prepare('INSERT INTO platform_goals(id,owner,body,updated_at) VALUES (?,?,?,0)').run(expired.id, expired.owner, JSON.stringify(expired));
+    const expiredCommand = crypto.randomUUID(); db.prepare("INSERT INTO platform_commands(id,owner,type,fingerprint,payload,created_at) VALUES (?,?,'launch','fixture',?,0)").run(expiredCommand, expired.owner, JSON.stringify({ goalId: expired.id }));
+    await coordinator.alarm(); assert.equal(db.prepare('SELECT status FROM platform_commands WHERE id=?').get(expiredCommand)!.status, 'failed');
+    await coordinator.alarm(); assert(crashed, JSON.stringify(db.prepare('SELECT status,result FROM platform_commands').all())); assert.equal(db.prepare("SELECT count(*) n FROM platform_commands WHERE status='processing'").get()!.n, 1);
+    coordinator = new PlatformCoordinator(ctx as any, env); // New process, same durable storage/database.
+    let quotaInjected = false;
+    for (let i = 0; i < 24; i++) {
+      await coordinator.alarm();
+      if (!quotaInjected && db.prepare("SELECT count(*) n FROM platform_goals WHERE json_extract(body,'$.task.status') IN (1,2,3)").get()!.n === 2) {
+        memory.set(`gas:${new Date().toISOString().slice(0,10)}`, '3000000000000000000'); quotaInjected = true;
+        const blocked = {...expired, id: crypto.randomUUID(), spec: undefined}; blocked.input = {...blocked.input, id: blocked.id};
+        db.prepare('INSERT INTO platform_goals(id,owner,body,updated_at) VALUES (?,?,?,0)').run(blocked.id, blocked.owner, JSON.stringify(blocked));
+        db.prepare("INSERT INTO platform_commands(id,owner,type,fingerprint,payload,created_at) VALUES (?,?,'launch','quota-fixture',?,0)").run(crypto.randomUUID(), blocked.owner, JSON.stringify({goalId:blocked.id}));
+      }
+      if (db.prepare("SELECT count(*) n FROM platform_goals WHERE json_extract(body,'$.status')='completed'").get()!.n === 2) break;
+    }
+    assert(quotaInjected, 'exhaust sponsorship while funded tasks still require completion');
+    for (let i = 0; i < cookies.length; i++) {
+      const goals = await (await api('goals', undefined, cookies[i])).json() as any; const completed = goals.goals.filter((g: any) => g.status === 'completed'); assert.equal(completed.length, 1); assert.equal(completed[0].evidence.verdict, 'accept');
+      const auth = await client.readContract({ address: vaults[i]!, abi: requesterVaultAbi, functionName: 'getAuthorization', args: [accounts[1]!.address] }); assert.equal(auth.committed, 50000n);
+      assert.equal((await api(`commands/${commands[1-i]}`, undefined, cookies[i])).status, 404);
+    }
+    assert.equal(await client.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [accounts[2]!.address] }), 100000n);
+    assert.equal(await client.readContract({ address: manager, abi: taskManagerAbi, functionName: 'totalEscrowed' }), 0n);
+    assert.equal(db.prepare("SELECT count(*) n FROM platform_events WHERE json_extract(body,'$.event')='TaskSettled'").get()!.n, 2);
+    assert(!memory.has('pending:operator')); assert(!memory.has('pending:worker'));
+  } finally { globalThis.fetch = nativeFetch; db.close(); anvil.kill('SIGTERM'); }
+});

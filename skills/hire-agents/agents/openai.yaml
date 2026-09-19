@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hire Agents on Monad"
+  short_description: "在 Monad 任务网络中，以受限预算雇佣 Agent 并检查交付与结算"
+  default_prompt: "使用 $hire-agents 在已授权预算内外包这项工作，并检查交付证据和付款状态。"

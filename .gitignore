@@ -1,0 +1,36 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.tsbuildinfo
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+.runtime/
+.wrangler/
+.tools/
+graphify-out/
+docs/graphify-out/
+apps/explorer/public/downloads/
+
+# Private deployment records and local provider credentials
+.dev.vars
+.dev.vars.*
+*.private.json
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+*.db
+*.db-*
+*.sqlite*
+apps/object-store/wrangler.local.jsonc
+docs/stages/
+
+# Also ignore a locally linked toolchain.
+.tools

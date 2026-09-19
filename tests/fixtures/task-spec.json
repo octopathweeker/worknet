@@ -1,0 +1,38 @@
+{
+  "protocol": "agent-task/0.1",
+  "settlementChainId": "10143",
+  "taskManager": "0x1111111111111111111111111111111111111111",
+  "requester": "0x2222222222222222222222222222222222222222",
+  "clientRequestId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "capability": "analysis.token-transfers",
+  "capabilityVersion": "1.0.0",
+  "title": "统计固定区块范围内的 Transfer 事件",
+  "instructions": "按固定 token 地址与闭区间完整查询 Transfer 日志，返回事件数和原始单位金额总和。",
+  "input": {
+    "sourceChainId": "10143",
+    "token": "0x4444444444444444444444444444444444444444",
+    "fromBlock": "100",
+    "toBlock": "120"
+  },
+  "outputSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["eventCount", "totalAmountBaseUnits"],
+    "properties": {
+      "eventCount": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" },
+      "totalAmountBaseUnits": { "type": "string", "pattern": "^(0|[1-9][0-9]*)$" }
+    }
+  },
+  "reward": {
+    "token": "0x4444444444444444444444444444444444444444",
+    "amountBaseUnits": "50000"
+  },
+  "execution": { "taskDeadline": 1789812000, "claimLeaseSeconds": 180, "reviewWindowSeconds": 300 },
+  "verification": {
+    "profile": "rpc-transfer-aggregate",
+    "profileVersion": "1.0.0",
+    "criteria": ["指定 token 的完整 Transfer 日志计数一致", "原始单位金额总和一致"],
+    "unverifiableAction": "reject"
+  }
+}

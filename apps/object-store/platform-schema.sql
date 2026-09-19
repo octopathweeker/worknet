@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS platform_users (address TEXT PRIMARY KEY, vault TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS platform_challenges (id TEXT PRIMARY KEY, address TEXT NOT NULL, message TEXT NOT NULL, expires_at INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS platform_sessions (hash TEXT PRIMARY KEY, address TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS platform_goals (id TEXT PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS platform_goals_owner ON platform_goals(owner,updated_at);
+CREATE TABLE IF NOT EXISTS platform_commands (id TEXT PRIMARY KEY, owner TEXT NOT NULL, type TEXT NOT NULL, fingerprint TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', result TEXT, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS platform_commands_pending ON platform_commands(status,created_at);
+CREATE TABLE IF NOT EXISTS platform_intents (id TEXT PRIMARY KEY, owner TEXT NOT NULL, body TEXT NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS platform_rate (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS platform_health (id TEXT PRIMARY KEY, body TEXT NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS platform_events (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, block_number INTEGER NOT NULL, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS platform_events_task ON platform_events(task_id,block_number);

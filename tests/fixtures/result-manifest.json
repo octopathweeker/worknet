@@ -1,0 +1,23 @@
+{
+  "protocol": "agent-task/0.1",
+  "settlementChainId": "10143",
+  "taskManager": "0x1111111111111111111111111111111111111111",
+  "taskId": "1",
+  "attempt": "1",
+  "worker": "0x3333333333333333333333333333333333333333",
+  "specHash": "0x3a36de07759dad5504fe2ed3e32526528e0ac11126d93c98f59e1d81492ebd82",
+  "output": {
+    "eventCount": "2",
+    "totalAmountBaseUnits": "3000000"
+  },
+  "artifacts": [],
+  "provenance": {
+    "sourceChainId": "10143",
+    "blockRange": {
+      "fromBlock": "100",
+      "toBlock": "120",
+      "toBlockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "toolVersion": "fixture/1.0.0"
+  }
+}

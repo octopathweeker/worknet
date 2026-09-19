@@ -1,0 +1,1 @@
+{ "name": "@agent-task/cli", "version": "0.1.0", "private": true, "type": "module", "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit" }, "dependencies": { "@agent-task/runtime": "workspace:*", "@agent-task/protocol": "workspace:*", "viem": "2.56.8" } }

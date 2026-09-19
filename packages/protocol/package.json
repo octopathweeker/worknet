@@ -1,0 +1,27 @@
+{
+  "name": "@agent-task/protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./json": {
+      "types": "./dist/json.d.ts",
+      "import": "./dist/json.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agent-task/contracts": "workspace:*",
+    "ajv": "8.20.0",
+    "json-canonicalize": "3.0.1",
+    "json-schema-to-ts": "3.1.1",
+    "viem": "2.56.8"
+  }
+}
