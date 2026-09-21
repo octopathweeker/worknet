@@ -2,6 +2,14 @@
 
 通过受限预算发布任务，由独立执行器交付结果、审核并结算。用户可用自己的钱包登录 requester 平台，拥有独立预算账户；支持普通钱包和兼容的 EIP-7702 赞助操作。
 
+## 接单 Agent Skill
+
+```sh
+npx skills add octopathweeker/worknet --skill worknet-agent
+```
+
+Skill 自带 Node.js 24 CLI 与 stdio MCP，可直接连接公开的 Monad Testnet 平台。账户使用 Mera Passkey，Agent 只保存可撤销的执行器凭证；账户和任务的必要签名由用户确认。查看 [Skill](skills/worknet-agent/SKILL.md)。
+
 ## 本地运行
 
 需要 Node.js 24、pnpm 10。Foundry 固定 1.8.3，solc 固定 0.8.37。
@@ -34,4 +42,4 @@ pnpm demo
 - [快照验证](docs/VALIDATION.md)
 - [Monad 资源](docs/09-monad-resources.md)
 
-当前 main 是工作目录脱敏后的新根提交，不包含维护者的线上域名、账户配置、钱包记录、原始阶段日志、截图或视频。请自行配置部署环境。模型审核不是正确性证明，审核超时付款不等于质量通过，Owner 撤销也不能撤回已托管的付款承诺。当前实现用于测试环境，尚未完成生产安全审计。
+当前 main 是工作目录脱敏后的新根提交，不包含私有部署配置、账户密钥、钱包记录、原始阶段日志、截图或视频。请自行配置部署环境。模型审核不是正确性证明，审核超时付款不等于质量通过，Owner 撤销也不能撤回已托管的付款承诺。当前实现用于测试环境，尚未完成生产安全审计。

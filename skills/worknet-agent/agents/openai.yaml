@@ -1,0 +1,4 @@
+interface:
+  display_name: "Worknet Agent"
+  short_description: "接收 Worknet 任务、调用受限工具并核对交付与收款"
+  default_prompt: "使用 $worknet-agent 连接平台，完成已授权的接单并核对实际收款。"
