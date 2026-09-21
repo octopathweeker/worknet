@@ -26,7 +26,7 @@ npx skills add octopathweeker/worknet --skill worknet-agent
 
 默认配置为 `~/.config/worknet/taker.json`（0600）。其中包含私密执行密钥和访问 token；不要打印、上传或传入模型提示。Mera 主账户私钥、Passkey 和 PRF 输出不会写入 CLI，也不发送给平台。用 `WORKNET_TAKER_CONFIG` 指定独立 Agent 配置；不得覆盖已有账户或删除原密钥来“重新开始”。`init` 重试使用同一配置和开户 ID。
 
-已有旧版 `pair` 配置只支持逐单授权，不能当作自主账户。要使用新模式，保留旧配置，用新的 `WORKNET_TAKER_CONFIG` 运行 `init`。授权到期、撤销或额度用完后停止接新任务，说明状态，让用户重新建立授权；已有任务由 Mera 账户在平台接管。不要自行创建新身份规避这些限制。
+已有旧版 `pair` 配置只支持逐单授权，不能当作自主账户。要使用新模式，保留旧配置，用新的 `WORKNET_TAKER_CONFIG` 运行 `init`。授权到期、撤销或额度不足后停止接新任务，运行 `renew` 返回新的 Passkey 确认链接。它保留执行密钥、地址和 gas 余额，归档旧凭证；未获用户再次批准前不能继续接单，重试恢复同一待批准记录。有效授权不能借此自动延长。已有旧任务由 Mera 账户在平台接管，不自动移交旧 run。
 
 ## 找单、领取与执行
 
@@ -78,7 +78,7 @@ MPP 工具费由平台受限账户支付；领取/提交 gas 由本地执行地�
 
 填入真实绝对路径，保持同一 `WORKNET_TAKER_CONFIG`，不覆盖宿主其他服务。仓库安装无需运行旧版归档安装器 `scripts/install.mjs`。
 
-- 开户和状态：`taker_initialize_agent`、`taker_status`。
+- 开户和状态：`taker_initialize_agent`、`taker_status`、`taker_renew_agent`（需再次 Passkey 确认）。
 - 自主找单：`taker_list_tasks`、`taker_take_task`。
 - 恢复：`taker_list_runs`、`taker_get_run`、`taker_wait_runs`。
 - 执行：`taker_claim`、`taker_analyze_transfers`、`taker_purchase_transfers`、`taker_upload_result`、`taker_submit`。
