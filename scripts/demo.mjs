@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 process.chdir(fileURLToPath(new URL('..', import.meta.url)));
-const ports = { rpc: Number(process.env.DEMO_RPC_PORT ?? 8545), storage: Number(process.env.DEMO_STORAGE_PORT ?? 8787), api: Number(process.env.DEMO_API_PORT ?? 8788) };
-if (new Set(Object.values(ports)).size !== 3 || Object.values(ports).some(p => !Number.isInteger(p) || p < 1024 || p > 65535)) throw new Error('Demo ports must be distinct integers in 1024–65535');
+const ports = { rpc: Number(process.env.DEMO_RPC_PORT ?? 8545), storage: Number(process.env.DEMO_STORAGE_PORT ?? 8787), api: Number(process.env.DEMO_API_PORT ?? 8788), model: Number(process.env.DEMO_MODEL_PORT ?? 8790), judge1: Number(process.env.DEMO_JUDGE1_PORT ?? 8791), judge2: Number(process.env.DEMO_JUDGE2_PORT ?? 8792), judge3: Number(process.env.DEMO_JUDGE3_PORT ?? 8793) };
+if (new Set(Object.values(ports)).size !== 7 || Object.values(ports).some(p => !Number.isInteger(p) || p < 1024 || p > 65535)) throw new Error('Demo ports must be distinct integers in 1024–65535');
 // Never attach to an arbitrary service already listening on a configured port.
 for (const port of Object.values(ports)) await new Promise((resolve, reject) => {
   const server = createServer();
@@ -21,10 +21,12 @@ const config = path.join(run, 'config.json');
 const base = {
   ...process.env, LOCAL_RPC_URL: `http://127.0.0.1:${ports.rpc}`, STORAGE_URL: `http://127.0.0.1:${ports.storage}`,
   API_PORT: String(ports.api), DEMO_CONFIG: config,
+  JUDGE_URLS: `http://127.0.0.1:${ports.judge1},http://127.0.0.1:${ports.judge2},http://127.0.0.1:${ports.judge3}`,
   STORAGE_UPLOAD_TOKEN: randomBytes(32).toString('hex'), REQUESTER_API_TOKEN: randomBytes(32).toString('hex'), WORKSPACE_ACCESS_CODE: randomBytes(24).toString('base64url'),
 };
 // Each local demo gets fresh chain + databases. Local credentials are not printed.
 delete base.AGENT_PRIVATE_KEY; delete base.DEPLOYER_PRIVATE_KEY;
+if (!base.TYPESAFE_API_KEY) { base.TYPESAFE_API_KEY = 'local-stub-not-a-secret'; base.TYPESAFE_BASE_URL = `http://127.0.0.1:${ports.model}`; }
 await writeFile(path.join(run, 'credentials.env'), `STORAGE_UPLOAD_TOKEN=${base.STORAGE_UPLOAD_TOKEN}\nREQUESTER_API_TOKEN=${base.REQUESTER_API_TOKEN}\n`, { mode: 0o600 });
 await writeFile(path.join(run, 'WORKSPACE-ACCESS.md'), `# 本地工作区访问码\n\n${base.WORKSPACE_ACCESS_CODE}\n`, { mode: 0o600 });
 let stopping = false;
@@ -37,9 +39,9 @@ async function stop(code = 0) {
   console.log(`Demo stopped. Logs and data preserved: ${run}`); process.exit(code);
 }
 process.once('SIGINT', () => void stop()); process.once('SIGTERM', () => void stop());
-function launch(name, command, args, persistent = true) {
+function launch(name, command, args, persistent = true, env = {}) {
   const output = createWriteStream(path.join(run, `${name}.log`), { mode: 0o600 });
-  const child = spawn(command, args, { env: base, stdio: ['ignore', 'pipe', 'pipe'] }); children.push(child);
+  const child = spawn(command, args, { env: { ...base, ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); children.push(child);
   child.stdout.pipe(output); child.stderr.pipe(output);
   const complete = new Promise((resolve, reject) => {
     child.once('error', reject);
@@ -72,7 +74,17 @@ try {
   await ready(base.LOCAL_RPC_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }) }, async r => (await r.json()).result === '0x7a69');
   void launch('storage', process.execPath, ['apps/cli/dist/main.js', 'storage', '--port', String(ports.storage), '--directory', path.join(run, 'objects')]);
   await ready(`${base.STORAGE_URL}/objects/0x${'0'.repeat(64)}`, {}, r => r.status === 404);
+  if (!process.env.TYPESAFE_API_KEY) {
+    void launch('judge-model-stub', process.execPath, ['scripts/judge-model-stub.mjs'], true, { STUB_PORT: String(ports.model) });
+    await ready(`http://127.0.0.1:${ports.model}/health`, {}, async r => r.ok && (await r.json()).ok);
+  }
   await launch('deploy', 'pnpm', ['exec', 'tsx', 'scripts/local-deploy.ts'], false);
+  void launch('judge-1', process.execPath, ['apps/judge/dist/main.js'], true, { JUDGE_PORT: String(ports.judge1), JUDGE_ID: 'judge-1', JUDGE_ACCOUNT: '5' });
+  void launch('judge-2', process.execPath, ['apps/judge/dist/main.js'], true, { JUDGE_PORT: String(ports.judge2), JUDGE_ID: 'judge-2', JUDGE_ACCOUNT: '6' });
+  void launch('judge-3', process.execPath, ['apps/judge/dist/main.js'], true, { JUDGE_PORT: String(ports.judge3), JUDGE_ID: 'judge-3', JUDGE_ACCOUNT: '7' });
+  await ready(`http://127.0.0.1:${ports.judge1}/health`, {}, async r => r.ok && (await r.json()).ok);
+  await ready(`http://127.0.0.1:${ports.judge2}/health`, {}, async r => r.ok && (await r.json()).ok);
+  await ready(`http://127.0.0.1:${ports.judge3}/health`, {}, async r => r.ok && (await r.json()).ok);
   void launch('requester', process.execPath, ['apps/daemon/dist/main.js']);
   await ready(`http://127.0.0.1:${ports.api}/api/health`, {}, async r => r.ok && (await r.json()).ready);
   void launch('worker-transfer', process.execPath, ['apps/cli/dist/main.js', 'worker', '--config', config, '--account', '2']);

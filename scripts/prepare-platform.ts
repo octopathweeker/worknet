@@ -1,5 +1,5 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
-import { encodeDeployData, encodeFunctionData, erc20Abi, parseEther, type Abi, type Address, type Hex } from 'viem';
+import { encodeDeployData, encodeFunctionData, erc20Abi, parseEther, toFunctionSelector, type Abi, type Address, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { client, TEST_USDC, checkTestnet } from './testnet-common.js';
 import { JournalWallet, privateJson, persistPrivate } from './platform-chain.js';
@@ -17,7 +17,13 @@ const deployer = new JournalWallet(await oldKey('deployer', 'DEPLOYER_PRIVATE_KE
 const owner = new JournalWallet(await oldKey('owner', 'AGENT_PRIVATE_KEY'), 'funding-owner');
 const record = await privateJson<{ manager?: Address; factory?: Address; deploymentBlock?: string }>('deployment.json', () => ({}));
 async function deploy(name: 'TaskManager' | 'RequesterVaultFactory', args: unknown[], field: 'manager' | 'factory') {
-  if (record[field]) return record[field]!;
+  if (record[field]) {
+    if (name === 'TaskManager') {
+      const code=await client.getCode({address:record[field]!});
+      if (!code?.includes(toFunctionSelector('settleWithVerdicts(uint256,uint64,bytes32,uint16[],bytes[])').slice(2))) throw new Error('LEGACY_MANAGER: use scripts/prepare-m6.ts for an isolated release; preserve the existing journal');
+    }
+    return record[field]!;
+  }
   const artifact = JSON.parse(await readFile(`contracts/out/${name}.sol/${name}.json`, 'utf8')) as { abi: Abi; bytecode: { object: Hex } };
   const data = encodeDeployData({ abi: artifact.abi, bytecode: artifact.bytecode.object, args });
   const receipt = await deployer.send(`deploy-${name}`, { data });
@@ -27,7 +33,9 @@ async function deploy(name: 'TaskManager' | 'RequesterVaultFactory', args: unkno
 if (!process.argv.includes('--broadcast')) {
   console.log({ mode: 'preflight', addresses, gasPrice: String(await client.getGasPrice()), deployerBalance: String(await client.getBalance({ address: deployer.account.address })), fundingOwnerBalance: String(await client.getBalance({ address: owner.account.address })), record });
 } else {
-  const manager = await deploy('TaskManager', [TEST_USDC], 'manager');
+  const judgeAddresses = (process.env.JUDGE_ADDRESSES ?? '').split(',').map(value => value.trim()).filter(Boolean);
+  if (judgeAddresses.length === 0 || judgeAddresses.some(address => !/^0x[0-9a-fA-F]{40}$/.test(address))) throw new Error('JUDGE_ADDRESSES must list judge addresses');
+  const manager = await deploy('TaskManager', [TEST_USDC, judgeAddresses, Number(process.env.JUDGE_THRESHOLD ?? 2)], 'manager');
   const factory = await deploy('RequesterVaultFactory', [manager, TEST_USDC], 'factory');
   for (const name of ['sponsor', 'operator', 'worker']) {
     const receipt = await deployer.send(`gas-${name}-v1`, { to: addresses[name]!, value: parseEther(name === 'sponsor' ? '1.0' : '0.35') }); if (receipt.status !== 'success') throw new Error('FUNDING_FAILED');

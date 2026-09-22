@@ -4,7 +4,7 @@ pragma solidity 0.8.37;
 library TaskTypes {
     // A zeroed mapping slot is NOT an existing OPEN task: check requester != address(0).
     enum Status { OPEN, CLAIMED, SUBMITTED, SETTLED, CANCELLED, EXPIRED }
-    enum SettlementReason { REQUESTER_ACCEPT, REVIEW_TIMEOUT }
+    enum SettlementReason { REQUESTER_ACCEPT, REVIEW_TIMEOUT, JUDGE_VERDICT }
 
     uint64 internal constant MAX_TASK_LIFETIME = 1 days;
     uint32 internal constant MIN_REVIEW_WINDOW = 60;

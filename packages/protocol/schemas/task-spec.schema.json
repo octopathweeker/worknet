@@ -69,6 +69,48 @@
       "minLength": 1,
       "maxLength": 16384
     },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scheme",
+        "salt",
+        "publicKey",
+        "reviewPublicKey",
+        "rpId"
+      ],
+      "properties": {
+        "scheme": {
+          "const": "worknet-delivery/1"
+        },
+        "salt": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$",
+          "not": {
+            "const": "0x0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "publicKey": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$",
+          "not": {
+            "const": "0x0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "reviewPublicKey": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$",
+          "not": {
+            "const": "0x0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        },
+        "rpId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        }
+      }
+    },
     "input": {
       "type": "object"
     },

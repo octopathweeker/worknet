@@ -23,7 +23,8 @@ test('real 7702 delegation code enforces exact batch, expiry, revocation and rep
     const fixture = JSON.parse(readFileSync('tests/fixtures/7702-deployments.json','utf8'));
     for(const entry of Object.values(fixture.contracts) as Array<{address:Address;code:Hex}>)await request('anvil_setCode',[entry.address,entry.code]);
     async function deploy(name:string,args:unknown[]=[]){const artifact=JSON.parse(readFileSync(`contracts/out/${name}.sol/${name}.json`,'utf8')); const hash=await wallet.deployContract({abi:artifact.abi,bytecode:artifact.bytecode.object,args});return (await client.waitForTransactionReceipt({hash})).contractAddress!;}
-    const token=await deploy('MockUSDC');const manager=await deploy('TaskManager',[token]);const factory=await deploy('RequesterVaultFactory',[manager,token]);
+const testJudges=['0x1111111111111111111111111111111111111111','0x2222222222222222222222222222222222222222'];
+    const token=await deploy('MockUSDC');const manager=await deploy('TaskManager',[token,testJudges,1]);const factory=await deploy('RequesterVaultFactory',[manager,token]);
     await request('anvil_setBalance',[user.address,'0x0']);
     const auth=await user.signAuthorization({chainId:10143,contractAddress:delegatedImplementation,nonce:0});
     // The deliberately failing execution must leave the authorization installed.

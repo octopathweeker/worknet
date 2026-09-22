@@ -31,7 +31,10 @@
     "testnet:happy": "tsx scripts/testnet-happy.ts",
     "testnet:faults": "tsx scripts/testnet-faults.ts",
     "dashboard:publish": "tsx scripts/publish-dashboard.ts",
-    "release:check": "node scripts/check-release.mjs"
+    "release:check": "node scripts/check-release.mjs",
+    "deploy:production": "node scripts/deploy-production.mjs",
+    "taker": "tsx packages/taker/src/cli.ts",
+    "taker:bundle": "node scripts/build-taker-client.mjs"
   },
   "devDependencies": {
     "@agent-task/accounts": "workspace:*",
@@ -44,10 +47,13 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@openzeppelin/contracts": "5.6.1",
     "@types/node": "24.10.1",
+    "esbuild": "0.28.2",
     "solc": "0.8.37",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
     "viem": "2.56.8",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "@agent-task/privacy": "workspace:*",
+    "@agent-task/identity": "workspace:*"
   }
 }

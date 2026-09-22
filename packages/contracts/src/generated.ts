@@ -28,7 +28,17 @@ export const taskManagerAbi = [
   },
   {
     "inputs": [],
+    "name": "DuplicateJudge",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "IncorrectTokenAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidJudgeSet",
     "type": "error"
   },
   {
@@ -45,6 +55,11 @@ export const taskManagerAbi = [
       }
     ],
     "name": "InvalidState",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidVerdictCount",
     "type": "error"
   },
   {
@@ -82,6 +97,17 @@ export const taskManagerAbi = [
       }
     ],
     "name": "TaskNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "signer",
+        "type": "address"
+      }
+    ],
+    "name": "UnknownJudge",
     "type": "error"
   },
   {
@@ -419,6 +445,43 @@ export const taskManagerAbi = [
     "type": "event"
   },
   {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "worker",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint16",
+        "name": "medianBps",
+        "type": "uint16"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "workerAmount",
+        "type": "uint128"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "refundAmount",
+        "type": "uint128"
+      }
+    ],
+    "name": "VerdictSettled",
+    "type": "event"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -722,6 +785,57 @@ export const taskManagerAbi = [
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "isJudge",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "judgeThreshold",
+    "outputs": [
+      {
+        "internalType": "uint8",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "index",
+        "type": "uint256"
+      }
+    ],
+    "name": "judges",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "uint256",
         "name": "taskId",
         "type": "uint256"
@@ -756,6 +870,39 @@ export const taskManagerAbi = [
       }
     ],
     "name": "releaseExpiredClaim",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "taskId",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint64",
+        "name": "expectedAttempt",
+        "type": "uint64"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "expectedResultHash",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "uint16[]",
+        "name": "completionBps",
+        "type": "uint16[]"
+      },
+      {
+        "internalType": "bytes[]",
+        "name": "signatures",
+        "type": "bytes[]"
+      }
+    ],
+    "name": "settleWithVerdicts",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

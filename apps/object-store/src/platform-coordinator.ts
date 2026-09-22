@@ -1,4 +1,10 @@
+import { protectResult, reviewResult, reviewOpening, publicPrivateEvidence } from './private-deliveries.js';
+import { validateResultManifest } from '@agent-task/protocol';
+import { collectPlatformVerdicts, quorumEvidence } from './platform-quorum.js';
+import type { JudgeRequest } from '@agent-task/judging';
+import { coordinatorDelay } from './resource-scheduling.js';
 import type { DurableObjectState } from '@cloudflare/workers-types';
+import { TransactionReceiptNotFoundError } from 'viem';
 import { createWalletClient, http, encodeFunctionData, erc20Abi, keccak256, decodeEventLog, parseTransaction, type Address, type Hex, type Abi } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { monadTestnet } from 'viem/chains';
@@ -7,8 +13,11 @@ import { redeemPermission, isSupportedDelegation, type AccountCall } from '@agen
 import { canonicalJson, hashJson, parseJsonStrict } from '@agent-task/protocol/json';
 import { platformConfig, platformClient } from './platform-api.js';
 import { makeTask, taskParams, serialize, publicPlatformError, type PlatformGoal } from './platform-domain.js';
+import { getRun, executorActive, marketTask, claimCall, submitCall } from './taker-api.js';
 import { executePlatformTask, verifyPlatformResult } from './platform-execution.js';
+import { identityManifestFields } from './platform-identity.js';
 import type { Env } from './index.js';
+import { dailyGasLimit, sponsorshipBudget } from './platform-sponsorship.js';
 
 type Role = 'operator' | 'worker' | 'sponsor';
 type Outbox = { to: Address; data: Hex; raw: Hex; hash: Hex; status: 'signed' | 'confirmed' | 'reverted'; block?: string; gasPaid?: string; gasDay?: string; reservedGas?: string };
@@ -26,16 +35,23 @@ export class PlatformCoordinator {
     let error: string | undefined;
     await this.migrateGasLedger();
     // A blocked new command must never prevent reviewing already funded work.
-    for (const work of [() => this.indexEvents(), () => this.processCommand(), () => this.advanceGoal()]) {
+    for (const [stage, work] of [['index', () => this.indexEvents()], ['command', () => this.processCommand()], ['goal', () => this.advanceGoal()]] as const) {
       try { await work(); }
-      catch (e) { if (!String(e).includes('AWAITING_FINALITY')) { error = publicPlatformError(e); console.error('platform-tick', String(e).slice(0, 1000)); } }
+      catch (e) { if (!String(e).includes('AWAITING_FINALITY')) { error = publicPlatformError(e); console.error('platform-tick', stage, e instanceof Error ? e.name : 'UnknownError', publicPlatformError(e)); } }
     }
-    await this.env.DB!.prepare("INSERT INTO platform_health(id,body,updated_at) VALUES ('current',?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at").bind(serialize({ ready: !error, ...(error ? { error } : {}), service: 'cloudflare-durable-coordinator' }), Date.now()).run();
-    const pending = await this.env.DB!.prepare("SELECT (SELECT count(*) FROM platform_commands WHERE status IN ('queued','processing')) + (SELECT count(*) FROM platform_goals WHERE active=1) AS n").first<{ n: number }>();
-    if (pending?.n) await this.ctx.storage.setAlarm(Date.now() + 1500); else await this.ctx.storage.setAlarm(Date.now() + 60000);
+    const spent = BigInt(await this.ctx.storage.get<string>(`gas:${new Date().toISOString().slice(0, 10)}`) ?? '0');
+    await this.env.DB!.prepare("INSERT INTO platform_health(id,body,updated_at) VALUES ('current',?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at").bind(serialize({ ready: !error, ...(error ? { error } : {}), gasBudget: sponsorshipBudget(spent, dailyGasLimit(this.env.PLATFORM_DAILY_GAS_LIMIT_MON)), service: 'cloudflare-durable-coordinator' }), Date.now()).run();
+    const pending = await this.env.DB!.prepare("SELECT (SELECT count(*) FROM platform_commands WHERE status IN ('queued','processing') AND COALESCE(json_extract(result,'$.retryAt'),0)<=?) AS commands, (SELECT count(*) FROM platform_goals WHERE active=1) AS goals, (SELECT min(CASE CAST(json_extract(body,'$.task.status') AS INTEGER) WHEN 0 THEN CAST(json_extract(body,'$.task.taskDeadline') AS INTEGER) WHEN 1 THEN CAST(json_extract(body,'$.task.claimLeaseExpiresAt') AS INTEGER) WHEN 2 THEN CAST(json_extract(body,'$.task.reviewDeadline') AS INTEGER) END) FROM platform_goals WHERE active=1) AS deadline").bind(Date.now()).first<{ commands: number; goals: number; deadline: number|null }>();
+    await this.ctx.storage.setAlarm(Date.now() + coordinatorDelay(pending?.commands??0,pending?.goals??0,pending?.deadline??null));
+    if ((await this.ctx.storage.get<number>('last-cleanup') ?? 0) < Date.now()-3600000) {
     await this.env.DB!.prepare('DELETE FROM platform_challenges WHERE expires_at<?').bind(Date.now() - 3600000).run();
     await this.env.DB!.prepare('DELETE FROM platform_sessions WHERE expires_at<?').bind(Date.now()).run();
     await this.env.DB!.prepare('DELETE FROM platform_rate WHERE expires_at<?').bind(Date.now() - 86400000).run();
+      await this.env.DB!.prepare('DELETE FROM platform_webhook_receipts WHERE created_at<?').bind(Date.now()-86400000).run();
+      await this.env.DB!.prepare('DELETE FROM platform_model_calls WHERE created_at<?').bind(Date.now()-30*86400000).run();
+      await this.env.DB!.prepare("DELETE FROM platform_model_budgets WHERE key LIKE '%:minute' AND CAST(substr(key,1,instr(key,':')-1) AS INTEGER)<?").bind(Math.floor(Date.now()/60000)-1440).run();
+      await this.ctx.storage.put('last-cleanup',Date.now());
+    }
   }
   private async migrateGasLedger() {
     if (await this.ctx.storage.get('gas-ledger-v2')) return;
@@ -83,7 +99,15 @@ export class PlatformCoordinator {
       if (entry.status === 'reverted') throw new Error(`TRANSACTION_REVERTED:${entry.hash}`);
       if (entry.status === 'confirmed') return entry;
       let receipt = await client.getTransactionReceipt({ hash: entry.hash }).catch(() => undefined);
-      if (!receipt) { try { await client.sendRawTransaction({ serializedTransaction: entry.raw }); } catch { /* Receipt determines outcome; never sign a replacement. */ } receipt = await client.waitForTransactionReceipt({ hash: entry.hash, timeout: 20000, pollingInterval: 1000 }); }
+      if (!receipt) {
+        try { await client.sendRawTransaction({ serializedTransaction: entry.raw }); }
+        catch (error) {
+          // Preserve the signed transaction and nonce. Funding can unblock this exact outbox entry.
+          // Do not expose the RPC error (it may contain a serialized authorization) in user-facing logs.
+          if (/insufficient funds|insufficient balance/i.test(String(error))) throw new Error('SIGNER_GAS_INSUFFICIENT');
+        }
+        receipt = await client.waitForTransactionReceipt({ hash: entry.hash, timeout: 20000, pollingInterval: 1000 });
+      }
       for (let i = 0; (await client.getBlock({ blockTag: 'finalized' })).number < receipt.blockNumber; i++) {
         if (i >= 8) throw new Error('AWAITING_FINALITY');
         await new Promise(resolve => setTimeout(resolve, 400));
@@ -101,27 +125,27 @@ export class PlatformCoordinator {
     const pending = await this.ctx.storage.get<string>(`pending:${role}`);
     if (pending) { const entry = await this.ctx.storage.get<Outbox>(pending); if (!entry) throw new Error('OUTBOX_CORRUPT'); await confirm(pending, entry); }
     await client.call({ account, to, data });
-    const gas = await client.estimateGas({ account, to, data }); if (gas > 5000000n) throw new Error('SPONSOR_LIMIT');
+    const gas = await client.estimateGas({ account, to, data }); if (gas > 5000000n) throw new Error('SPONSOR_TX_GAS_LIMIT');
     const request = await wallet.prepareTransactionRequest({ to, data, gas: gas * 120n / 100n, nonce: await client.getTransactionCount({ address: account.address, blockTag: 'pending' }) });
-    const maxFee = request.maxFeePerGas ?? request.gasPrice ?? 0n; if (maxFee > 300000000000n) throw new Error('SPONSOR_LIMIT');
+    const maxFee = request.maxFeePerGas ?? request.gasPrice ?? 0n; if (maxFee > 300000000000n) throw new Error('SPONSOR_FEE_LIMIT');
     const day = `gas:${new Date().toISOString().slice(0, 10)}`; const spent = BigInt(await this.ctx.storage.get<string>(day) ?? '0'); const reserve = request.gas! * maxFee;
     // Stop new commitments at the daily sponsorship threshold. Already funded tasks must
     // still be deliverable, reviewed, released or refunded; a quota must not force timeout payment.
-    const completingTask = role === 'operator' && /^(accept|reject|expire|cancel-after-failed-attempts):/.test(intent)
-      || role === 'worker' && /^(submit|release|review-timeout-settlement):/.test(intent);
-    if (spent + reserve > 2000000000000000000n && !completingTask) throw new Error('SPONSOR_LIMIT');
+    const completingTask = role === 'operator' && /^(quorum-settle|accept|reject|expire|cancel-after-failed-attempts):/.test(intent)
+      || role === 'worker' && /^(submit|release|review-timeout-settlement):/.test(intent)
+      || role === 'sponsor' && intent.startsWith('taker-submit:');
+    if (spent + reserve > dailyGasLimit(this.env.PLATFORM_DAILY_GAS_LIMIT_MON) && !completingTask) throw new Error('SPONSOR_DAILY_LIMIT');
     const raw = await wallet.signTransaction(request); const entry: Outbox = { to, data, raw, hash: keccak256(raw), status: 'signed', gasDay: day, reservedGas: reserve.toString() };
     await this.ctx.storage.put({ [id]: entry, [`pending:${role}`]: id, [day]: (spent + reserve).toString() });
     return confirm(id, entry);
   }
   private call(role: Role, intent: string, address: Address, abi: Abi, functionName: string, args: readonly unknown[]) { return this.write(role, intent, address, encodeFunctionData({ abi, functionName, args })); }
-  private async storeGoal(goal: PlatformGoal, active = true) { await this.env.DB!.prepare('UPDATE platform_goals SET body=?,active=?,updated_at=? WHERE id=? AND owner=?').bind(serialize(goal), active ? 1 : 0, Date.now(), goal.id, goal.owner).run(); }
-  private async reserveModelCall(amount = 1) {
-    const key = `model-calls:${new Date().toISOString().slice(0, 10)}`;
-    const count = await this.ctx.storage.get<number>(key) ?? 0;
-    if (count + amount > 100) throw new Error('MODEL_DAILY_LIMIT');
-    await this.ctx.storage.put(key, count + amount);
-  }
+  private async storeGoal(goal: PlatformGoal, active = true) {
+    if (goal.spec?.delivery) {
+      if (goal.evidence) goal.evidence = publicPrivateEvidence(goal.evidence,true);
+      if (goal.verificationHistory) goal.verificationHistory = goal.verificationHistory.map(e => publicPrivateEvidence(e,true));
+    }
+    await this.env.DB!.prepare('UPDATE platform_goals SET body=?,active=?,updated_at=? WHERE id=? AND owner=?').bind(serialize(goal), active ? 1 : 0, Date.now(), goal.id, goal.owner).run(); }
   private async put(value: unknown) {
     const body = canonicalJson(value); const hash = hashJson(value); await this.env.DB!.prepare('INSERT OR IGNORE INTO objects(hash,body,created_at) VALUES (?,?,?)').bind(hash, body, Date.now()).run(); return { hash, uri: `${platformConfig(this.env).storageUrl}/objects/${hash}` };
   }
@@ -130,7 +154,7 @@ export class PlatformCoordinator {
     const row = await this.env.DB!.prepare('SELECT body FROM objects WHERE hash=?').bind(hash).first<{ body: string }>(); if (!row) throw new Error('RESULT_NOT_AVAILABLE'); const value = parseJsonStrict(row.body); if (hashJson(value) !== hash) throw new Error('RESULT_HASH_MISMATCH'); return value;
   }
   private async processCommand() {
-    const row = await this.env.DB!.prepare("SELECT id,owner,type,payload FROM platform_commands WHERE status IN ('queued','processing') ORDER BY created_at LIMIT 1").first<{ id: string; owner: Address; type: string; payload: string }>(); if (!row) return;
+    const row = await this.env.DB!.prepare("SELECT id,owner,type,payload FROM platform_commands WHERE status IN ('queued','processing') AND COALESCE(json_extract(result,'$.retryAt'),0)<=? ORDER BY created_at LIMIT 1").bind(Date.now()).first<{ id: string; owner: Address; type: string; payload: string }>(); if (!row) return;
     await this.env.DB!.prepare("UPDATE platform_commands SET status='processing' WHERE id=?").bind(row.id).run();
     const payload = JSON.parse(row.payload); const config = platformConfig(this.env); const client = platformClient(config);
     try {
@@ -143,6 +167,8 @@ export class PlatformCoordinator {
         const execution = redeemPermission({ ...intent.delegation, signature: payload.signature }, calls);
         const receipt = await this.write('sponsor', row.id, execution.to, execution.data);
         result = { transactionHash: receipt.hash, vault: intent.vault };
+      } else if (row.type === 'taker-claim' || row.type === 'taker-submit') {
+        result = await this.processTaker(row.owner, row.type, payload.runId);
       } else if (row.type === 'launch') {
         const entry = await this.env.DB!.prepare('SELECT body FROM platform_goals WHERE id=? AND owner=?').bind(payload.goalId, row.owner).first<{ body: string }>(); if (!entry) throw new Error('GOAL_NOT_FOUND');
         const goal = JSON.parse(entry.body) as PlatformGoal;
@@ -171,10 +197,45 @@ export class PlatformCoordinator {
     } catch (error) {
       const text = String(error);
       // A deterministic contract revert must not keep a tenant's command at the head forever.
-      const permanent = /BUDGET_UNAVAILABLE|INVALID_BLOCK_RANGE|SOURCE_NOT_ALLOWED|INTENT_EXPIRED|WRONG_DELEGATION|TRANSACTION_REVERTED|GOAL_NOT_FOUND|execution reverted|reverted with/i.test(text);
-      if (permanent) await this.env.DB!.prepare("UPDATE platform_commands SET status='failed',result=? WHERE id=?").bind(serialize({ error: publicPlatformError(error) }), row.id).run();
-      else { await this.env.DB!.prepare('UPDATE platform_commands SET result=? WHERE id=?').bind(serialize(text.includes('AWAITING_FINALITY') ? { pending: 'finality', retrying: true } : { error: publicPlatformError(error), retrying: true }), row.id).run(); throw error; }
+      const permanent = /SPONSOR_DAILY_LIMIT|SPONSOR_TX_GAS_LIMIT|SPONSOR_FEE_LIMIT|BUDGET_UNAVAILABLE|INVALID_BLOCK_RANGE|SOURCE_NOT_ALLOWED|INTENT_EXPIRED|WRONG_DELEGATION|TRANSACTION_REVERTED|GOAL_NOT_FOUND|TAKER_REVOKED|TASK_UNAVAILABLE|RESULT_REQUIRED|execution reverted|reverted with/i.test(text);
+      if (permanent) {
+        // An unsigned publication may be retried explicitly with a fresh deadline. Never
+        // replace a frozen spec once an outbox transaction exists, even after a revert.
+        if (row.type === 'launch') {
+          const entry = await this.env.DB!.prepare('SELECT body FROM platform_goals WHERE id=? AND owner=?').bind(payload.goalId, row.owner).first<{ body: string }>();
+          if (entry) {
+            const goal = JSON.parse(entry.body) as PlatformGoal;
+            if (!goal.taskId) {
+              if (!await this.ctx.storage.get(`tx:operator:launch:${goal.id}`)) { delete goal.spec; goal.status = 'draft'; }
+              goal.error = publicPlatformError(error); await this.storeGoal(goal, false);
+            }
+          }
+        }
+        await this.env.DB!.prepare("UPDATE platform_commands SET status='failed',result=? WHERE id=?").bind(serialize({ error: publicPlatformError(error) }), row.id).run();
+      } else { await this.env.DB!.prepare('UPDATE platform_commands SET result=? WHERE id=?').bind(serialize({ ...(text.includes('AWAITING_FINALITY') ? { pending: 'finality' } : { error: publicPlatformError(error) }), retrying: true, retryAt: Date.now() + 15000 }), row.id).run(); throw error; }
     }
+  }
+  private async processTaker(owner: Address, type: string, runId: string) {
+    const run = await getRun(this.env, runId); if (!run || run.owner !== owner) throw new Error('TAKER_REVOKED');
+    const config = platformConfig(this.env); const body = JSON.parse(run.body);
+    const call = type === 'taker-claim' ? claimCall(config.manager, run.task_id) : submitCall(config.manager, run, config.storageUrl);
+    const permission = type === 'taker-claim' ? body.claimPermission : body.submitPermission;
+    const execution = redeemPermission(permission, [call]); const intent = `${type}:${runId}`;
+    // Once signed, reconcile the exact raw transaction even after revocation. Revocation cannot unsign it.
+    if (!await this.ctx.storage.get(`tx:sponsor:${intent}`)) {
+      if (run.revoked || !body.authorized || body.mode !== 'sponsored' || body.validUntil * 1000 <= Date.now() || run.executor_id && !await executorActive(this.env, run.executor_id, owner)) throw new Error('TAKER_REVOKED');
+      const { task } = await marketTask(this.env, run.task_id);
+      if (type === 'taker-claim') {
+        if (task.status >= 1 && task.worker.toLowerCase() === owner && String(task.attempt) === run.attempt) return { reconciled: true, taskId: run.task_id, attempt: run.attempt };
+        if (task.status !== 0 || String(task.attempt + 1n) !== run.attempt) throw new Error('TASK_UNAVAILABLE');
+      } else {
+        if (task.status >= 2 && task.worker.toLowerCase() === owner && String(task.attempt) === run.attempt && task.resultHash === run.result_hash) return { reconciled: true, taskId: run.task_id, resultHash: run.result_hash };
+        if (task.status !== 1 || task.worker.toLowerCase() !== owner || String(task.attempt) !== run.attempt) throw new Error('TASK_UNAVAILABLE');
+      }
+      if (!isSupportedDelegation(await platformClient(config).getCode({ address: owner }))) throw new Error('WRONG_DELEGATION');
+    }
+    const tx = await this.write('sponsor', intent, execution.to, execution.data);
+    return { transactionHash: tx.hash, taskId: run.task_id, attempt: run.attempt };
   }
   private async advanceGoal() {
     // Round-robin through active goals so one unavailable task cannot starve others.
@@ -197,7 +258,30 @@ export class PlatformCoordinator {
       }
       goal.verificationHistory = [...history.values()];
       if (goal.evidence && (goal.evidence.attempt !== task.attempt.toString() || goal.evidence.resultHash !== task.resultHash)) { delete goal.evidence; delete goal.result; }
-      if (task.status >= 3) { goal.status = task.status === 3 && goal.audit?.verdict !== 'reject' && goal.evidence?.verdict === 'accept' && goal.evidence.attempt === task.attempt.toString() && goal.evidence.resultHash === task.resultHash ? 'completed' : 'attention'; if (goal.audit?.verdict === 'reject') goal.error = goal.audit.reason; await this.storeGoal(goal, false); return; }
+      if (spec.verification.profile === 'jev.quorum') {
+        const saved = await this.ctx.storage.get<any>(`review:${id}:${task.attempt}:${task.resultHash}`);
+        if (saved) goal.evidence = saved;
+        if (task.status === 3) {
+          const tx = await this.ctx.storage.get<Outbox>(`tx:operator:quorum-settle:${id}:${task.attempt}:${task.resultHash}`);
+          if (tx) {
+            // The finalized task may have been settled by its owner or timeout
+            // while our signed quorum transaction never reached the chain.
+            // Retain that outbox entry; absence is not proof it can be resent.
+            const receipt = await client.getTransactionReceipt({hash:tx.hash}).catch(error => {
+              if (error instanceof TransactionReceiptNotFoundError) return undefined;
+              throw error;
+            });
+            if(receipt?.status === 'success') for(const log of receipt.logs) {
+              if(log.address.toLowerCase() !== config.manager.toLowerCase()) continue;
+              try { const d=decodeEventLog({abi:taskManagerAbi,data:log.data,topics:log.topics});
+                if(d.eventName==='VerdictSettled' && d.args.taskId===id) goal.settlement={completionBps:d.args.medianBps,workerAmount:d.args.workerAmount.toString(),refundAmount:d.args.refundAmount.toString(),transactionHash:tx.hash};
+              } catch { /* Token transfers have a different ABI. */ }
+            }
+          }
+          if (!goal.result) goal.result=await this.getObject(task.resultURI,task.resultHash).catch(()=>undefined);
+        }
+      }
+      if (task.status >= 3) { goal.status = task.status === 3 && goal.settlement ? 'settled' : task.status === 3 && goal.audit?.verdict !== 'reject' && (goal.evidence?.verdict === 'accept' || goal.settlement && goal.settlement.completionBps === 10000) && goal.evidence?.attempt === task.attempt.toString() && goal.evidence.resultHash === task.resultHash ? 'completed' : 'attention'; if (goal.audit?.verdict === 'reject') goal.error = goal.audit.reason; await this.storeGoal(goal, false); return; }
       const now = (await client.getBlock()).timestamp;
       const event = async (role: Role, action: string, address: Address, abi: Abi, fn: string, args: unknown[]) => {
         const tx = await this.call(role, `${action}:${id}:${task.attempt}:${task.resultHash}`, address, abi, fn, args);
@@ -209,6 +293,7 @@ export class PlatformCoordinator {
       }
       if (task.status === 0) {
         if (task.attempt >= 2n) { await event('operator', 'cancel-after-failed-attempts', goal.vault, requesterVaultAbi, 'cancelTask', [id]); goal.error = '两轮执行未完成，已取消并退还剩余托管奖励。'; await this.storeGoal(goal); return; }
+        if (goal.input.execution === 'market') { await this.storeGoal(goal); return; }
         await event('worker', 'claim', config.manager, taskManagerAbi, 'claimTask', [id]); await this.storeGoal(goal); return;
       }
       if (task.status === 1 && task.worker.toLowerCase() === config.worker.toLowerCase()) {
@@ -218,20 +303,55 @@ export class PlatformCoordinator {
           const triesKey = `execution-tries:${id}:${jobAttempt}`; const tries = await this.ctx.storage.get<number>(triesKey) ?? 0;
           if (tries >= 2) { goal.error = '本轮执行两次未完成，等待领取租约释放后恢复；不会持续消耗模型额度。'; await this.storeGoal(goal); return; }
           await this.ctx.storage.put(triesKey, tries + 1);
-          if (spec.capability === 'research.web') await this.reserveModelCall();
           const previous = (goal.verificationHistory ?? []).findLast(e => e.verdict === 'reject' && BigInt(e.attempt) < jobAttempt);
           let feedback: unknown;
           if (previous) {
             const priorResult = await this.getObject(`${config.storageUrl}/objects/${previous.resultHash}`, previous.resultHash).catch(() => null) as any;
-            feedback = { previousOutput: priorResult?.output, checks: previous.checks };
+            feedback = { previousOutput: priorResult ? (await reviewResult(this.env,priorResult,spec)).output : undefined, checks: previous.checks };
           }
-          const execution = await executePlatformTask(spec, config, this.env, feedback);
-          const result = { protocol: 'agent-task/0.1', settlementChainId: '10143', taskManager: config.manager.toLowerCase(), taskId: id.toString(), attempt: task.attempt.toString(), worker: config.worker.toLowerCase(), specHash: task.specHash, output: execution.output, artifacts: [], provenance: execution.provenance };
+          const execution = await executePlatformTask(spec, config, this.env, feedback, {modelContext:{owner:goal.owner,taskId:id.toString(),attempt:task.attempt.toString()}});
+          const { identityArtifact, ...identity } = await identityManifestFields(this.env, config.worker);
+          const plainResult = { protocol: 'agent-task/0.1', settlementChainId: '10143', taskManager: config.manager.toLowerCase(), taskId: id.toString(), attempt: task.attempt.toString(), worker: config.worker.toLowerCase(), specHash: task.specHash, output: execution.output, artifacts: [...('artifacts' in execution ? execution.artifacts : []), ...(identityArtifact ? [identityArtifact] : [])], provenance: execution.provenance, ...identity };
+          const result = await protectResult(this.env,spec,validateResultManifest(plainResult));
           job = await this.put(result); await this.ctx.storage.put(jobKey, job);
         }
         task = await client.readContract({ address: config.manager, abi: taskManagerAbi, functionName: 'getTask', args: [id] });
         if (task.status !== 1 || task.attempt !== jobAttempt || task.worker.toLowerCase() !== config.worker.toLowerCase() || (await client.getBlock()).timestamp >= task.claimLeaseExpiresAt) { await this.storeGoal(goal); return; }
         await event('worker', 'submit', config.manager, taskManagerAbi, 'submitResult', [id, task.attempt, job.hash, job.uri]); delete goal.error; await this.storeGoal(goal); return;
+      }
+      if (task.status === 2 && spec.verification.profile === 'jev.quorum') {
+        const reviewKey=`review:${id}:${task.attempt}:${task.resultHash}`;
+        let evidence=await this.ctx.storage.get<any>(reviewKey);
+        if(evidence?.verdict !== 'scored' && task.reviewDeadline-now > 45n) {
+          const retryAt=await this.ctx.storage.get<number>(`${reviewKey}:retryAt`)??0;
+          if(Date.now()<retryAt){goal.error='裁判暂未达到签名门槛，系统会重试。';await this.storeGoal(goal);return;}
+          try {
+            const result=await this.getObject(task.resultURI,task.resultHash) as JudgeRequest['result'];
+            if(result.worker!==task.worker.toLowerCase() || spec.requester!==goal.vault.toLowerCase())throw new Error('RESULT_BINDING_MISMATCH');
+            goal.result=result;
+            const privateOpening = await reviewOpening(this.env,result);
+            const payload:JudgeRequest={...(privateOpening ? {privateOpening} : {}),spec,result,taskId:id.toString(),attempt:task.attempt.toString(),resultHash:task.resultHash,specHash:task.specHash};
+            const verdicts=await collectPlatformVerdicts(this.env,config,payload);
+            evidence=quorumEvidence(payload,verdicts,task.rewardAmount);
+            await this.ctx.storage.put(reviewKey,evidence);
+          } catch(error) {
+            await this.ctx.storage.put(`${reviewKey}:retryAt`,Date.now()+15000);
+            goal.error=publicPlatformError(error);await this.storeGoal(goal);return;
+          }
+        }
+        if(evidence?.verdict==='scored') {
+          goal.evidence=evidence;await this.storeGoal(goal);
+          // Reuse durable verdicts and the transaction outbox across retries and restarts.
+          await event('operator','quorum-settle',config.manager,taskManagerAbi,'settleWithVerdicts',[id,task.attempt,task.resultHash,evidence.verdicts.map((v:any)=>v.completionBps),evidence.verdicts.map((v:any)=>v.signature)]);
+          await this.storeGoal(goal);return;
+        }
+        // Preserve existing timeout/manual recovery rules; never describe a timeout as a judge approval.
+        if(now<task.reviewDeadline) {
+          goal.evidence={profile:'jev.quorum',verdict:'unverifiable',attempt:task.attempt.toString(),resultHash:task.resultHash,checks:[{name:'judge-quorum',passed:false,detail:'裁判未达到门槛，当前交付无法完成裁决。'}]};
+          await this.ctx.storage.put(reviewKey,goal.evidence);await this.storeGoal(goal);
+          await event('operator','reject',goal.vault,requesterVaultAbi,'rejectResult',[id,task.attempt,task.resultHash,hashJson(goal.evidence)]);
+          await this.storeGoal(goal);return;
+        }
       }
       if (task.status === 2) {
         if (now >= task.reviewDeadline) { await event('worker', 'review-timeout-settlement', config.manager, taskManagerAbi, 'finalize', [id]); goal.error = '审核窗口已结束并发生超时结算；这不代表验证通过。'; await this.storeGoal(goal); return; }
@@ -244,18 +364,17 @@ export class PlatformCoordinator {
           const triesKey = `tries:${reviewKey}`; const tries = await this.ctx.storage.get<number>(triesKey) ?? 0;
           await this.ctx.storage.put(triesKey, tries + 1);
           try {
-            if (spec.capability === 'research.web') await this.reserveModelCall(2);
             const result = await this.getObject(task.resultURI, task.resultHash) as any;
             if (result.protocol !== 'agent-task/0.1' || result.settlementChainId !== '10143' || result.taskManager !== config.manager.toLowerCase() || result.taskId !== id.toString() || result.attempt !== task.attempt.toString() || result.worker !== task.worker.toLowerCase() || result.specHash !== task.specHash) throw new Error('RESULT_BINDING_MISMATCH');
-            goal.result = result; evidence = { ...await verifyPlatformResult(spec, result, config, this.env), attempt: task.attempt.toString(), resultHash: task.resultHash };
+            goal.result = result; evidence = { ...await verifyPlatformResult(spec, await reviewResult(this.env,result,spec), config, this.env, {owner:goal.owner,taskId:id.toString(),attempt:task.attempt.toString()}), attempt: task.attempt.toString(), resultHash: task.resultHash };
           } catch (error) {
             if (tries < 2 && task.reviewDeadline - now > 90n && !/ZodError|RESULT_BINDING_MISMATCH|RESULT_HASH_MISMATCH|MODEL_DAILY_LIMIT/.test(String(error))) throw error;
             evidence = { verdict: 'reject', attempt: task.attempt.toString(), resultHash: task.resultHash, checks: [{ name: 'verification-available', passed: false, detail: '无法在审核期限内完成有效验证，拒绝当前提交。' }], checkedAt: new Date().toISOString() };
           }
-          await this.ctx.storage.put(reviewKey, evidence);
+          evidence = publicPrivateEvidence(evidence,Boolean(spec.delivery)); await this.ctx.storage.put(reviewKey, evidence);
         }
         if (!goal.result) goal.result = await this.getObject(task.resultURI, task.resultHash).catch(() => undefined);
-        goal.evidence = evidence; await this.storeGoal(goal);
+        evidence = publicPrivateEvidence(evidence,Boolean(spec.delivery)); goal.evidence = evidence; await this.storeGoal(goal);
         if (evidence.verdict === 'accept') await event('operator', 'accept', goal.vault, requesterVaultAbi, 'acceptResult', [id, task.attempt, task.resultHash]);
         else await event('operator', 'reject', goal.vault, requesterVaultAbi, 'rejectResult', [id, task.attempt, task.resultHash, hashJson(evidence)]);
         delete goal.error; await this.storeGoal(goal); return;

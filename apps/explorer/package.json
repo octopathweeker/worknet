@@ -5,18 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node ../../scripts/build-taker-client.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@agent-task/accounts": "workspace:*",
     "@agent-task/contracts": "workspace:*",
     "@agent-task/workspace": "workspace:*",
+    "@category-labs/mera": "0.2.0",
+    "@noble/curves": "2.2.0",
+    "@noble/hashes": "2.2.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "viem": "2.56.8"
+    "viem": "2.56.8",
+    "@agent-task/privacy": "workspace:*"
   },
   "devDependencies": {
+    "@agent-task/taker": "workspace:*",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "vite": "8.3.0"

@@ -1,0 +1,6 @@
+{
+  "name": "worknet-m6-judge-1", "main": "src/index.ts", "compatibility_date": "2026-09-01", "workers_dev": true,
+  "durable_objects": { "bindings": [{ "name": "EVALUATIONS", "class_name": "JudgeEvaluation" }] },
+  "migrations": [{ "tag": "judge-v1", "new_sqlite_classes": ["JudgeEvaluation"] }],
+  "vars": { "JUDGE_ID": "judge-1", "JEV_MODEL": "jev-1.13" }, "minify": true
+}

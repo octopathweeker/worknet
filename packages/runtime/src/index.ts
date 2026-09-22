@@ -9,6 +9,7 @@ export * from './schema.js';
 export * from './model.js';
 export * from './research.js';
 export * from './public-fetch.js';
+export * from './judges.js';
 export * from './errors.js';
 export * from './worker-control.js';
 export * from './workspace.js';

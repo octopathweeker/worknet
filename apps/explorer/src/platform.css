@@ -4,3 +4,55 @@
 /* One recharge action, with account controls disclosed separately. */
 .simple-budget{max-width:600px}.budget-page-heading{margin-bottom:28px}.budget-overview{padding:0 0 30px;border-bottom:1px solid var(--border)}.budget-overview>span{font-size:14px;color:var(--muted)}.budget-overview>strong{display:block;font-size:42px;font-weight:600;letter-spacing:-1px;margin-top:10px}.budget-overview strong>small{font-size:14px;color:var(--muted);font-weight:400;letter-spacing:0;margin-left:12px}.budget-overview>p{font-size:13px;color:var(--muted);margin-top:10px;line-height:1.6}.recharge-form{padding:28px 0 24px}.recharge-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px}.recharge-heading h2{font-size:19px}.recharge-heading>span{font-size:13px;color:var(--muted)}.recharge-form>label{display:block;font-size:14px;margin-bottom:10px}.recharge-input{display:flex;align-items:center;background:var(--panel);border:1px solid #4b566c;border-radius:9px;padding-right:18px;overflow:hidden}.recharge-input:focus-within{outline:2px solid var(--blue);outline-offset:3px}.recharge-input input{width:100%;min-width:0;padding:16px 18px;background:transparent;border:0;outline:0;color:var(--text);font:inherit;font-size:22px}.recharge-input input:read-only{color:var(--muted)}.recharge-input>span{white-space:nowrap;font-size:13px;color:var(--muted)}.recharge-hint{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted);line-height:1.6;margin:10px 0 22px}.recharge-hint>span{color:#b3c8c2}.recharge-form .recharge-submit{width:100%;min-height:48px;font-size:15px}.recharge-consent{font-size:12px;line-height:1.8;color:var(--muted);margin-top:13px}.recharge-notice{font-size:13px;line-height:1.8;color:#e2b76d;margin-top:10px}.recharge-cancel{display:block;margin:12px auto 0;min-height:44px}.recharge-options{font-size:12px;color:var(--muted);margin-top:18px}.recharge-options summary,.budget-management summary{cursor:pointer;padding:12px 0;min-height:44px}.recharge-options p,.budget-management p{font-size:12px;line-height:1.8;margin:10px 0;color:var(--muted)}.budget-management{border-top:1px solid var(--border);padding:8px 0;font-size:14px;color:#bbc5d7}.budget-management dl{display:grid;grid-template-columns:auto 1fr;gap:12px;font-size:12px;line-height:1.7;margin:16px 0}.budget-management dd{text-align:right;overflow-wrap:anywhere;min-width:0}.budget-management-actions{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin:18px 0}.budget-addresses{font-size:12px}.budget-test-assets{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:20px}.budget-test-assets a{color:#a9bcff}
 @media(max-width:760px){.simple-budget{max-width:none}.budget-overview>strong{font-size:36px}.recharge-heading{gap:8px}.recharge-heading>span{font-size:12px}.recharge-input input{font-size:20px}.recharge-hint{font-size:12px}.budget-management dl{grid-template-columns:1fr}.budget-management dd{text-align:left}}
+
+/* Match the existing composer controls: same inset, type, border and selected state. */
+.platform-shell .execution-choice{border:0;min-width:0;padding:0;margin:16px 26px 12px}
+.platform-shell .execution-choice legend{padding:0;margin-bottom:9px;color:var(--muted);font-size:12px;font-weight:500}
+.platform-shell .execution-choice legend>span{margin-left:8px;font-size:12px;color:var(--muted)}
+.platform-shell .execution-options{display:flex;gap:8px;flex-wrap:wrap}
+.platform-shell .execution-options label{position:relative;display:inline-flex;align-items:center;gap:14px;min-height:44px;padding:10px 13px;border:1px solid #394254;border-radius:8px;cursor:pointer;background:transparent;color:#aeb9ce;font-size:16px;line-height:1.5;transition:background-color 140ms,border-color 140ms,color 140ms}
+.platform-shell .execution-options label:hover{background:var(--hover);border-color:#52617c}
+.platform-shell .execution-options label.selected{background:#2c3858;color:#ced9ff;border-color:#627cb8}
+.platform-shell .execution-options input{position:absolute;width:1px;height:1px;padding:0;margin:0;opacity:0;overflow:hidden}
+.platform-shell .execution-options .execution-check{display:inline-flex;opacity:0}
+.platform-shell .execution-options label.selected .execution-check{opacity:1}
+.platform-shell .execution-options label:focus-within{outline:2px solid var(--blue);outline-offset:3px}
+.platform-shell .execution-choice>p{margin:9px 0 0;font-size:12px;line-height:1.7;color:var(--muted)}
+.platform-shell .execution-confirm{padding:12px 0;border-block:1px solid var(--border)}
+.platform-shell .execution-confirm strong{color:var(--text)}
+@media(max-width:760px){.platform-shell .execution-choice{margin:14px 20px 12px}}
+@media(prefers-reduced-motion:reduce){.platform-shell .execution-options label{transition:none}}
+
+/* Presets fill an editable goal; secondary delivery settings remain in the composer. */
+.platform-fields select{width:100%;max-width:340px;min-height:44px;padding:11px 13px;background:#171b24;border:1px solid #394254;border-radius:8px;color:var(--text);font:inherit}
+.platform-fields>p{font-size:12px;line-height:1.8;color:var(--muted)}
+.platform-starters .section-heading>span{font-size:12px;color:var(--muted)}
+.platform-starters .starter strong{font-size:13px}
+.platform-shell .composer-availability{margin:12px 26px;font-size:12px;color:var(--amber)}
+@media(max-width:760px){.platform-starters .section-heading{align-items:flex-start}.platform-shell .composer-availability{margin-inline:20px}}
+
+.activity-anchor{position:relative}.activity-panel{position:absolute;right:0;top:calc(100% + 12px);z-index:50;width:min(520px,calc(100vw - 36px));max-height:70vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;box-shadow:0 12px 40px #0005;box-sizing:border-box;color:var(--text)}.activity-panel .section-heading{margin:0}.activity-panel h2{font-size:18px}.activity-panel p{font-size:14px;line-height:1.7;overflow-wrap:anywhere}.activity-item{border-top:1px solid var(--border);padding:18px 0}.activity-item h3{font-size:15px;line-height:1.7;overflow-wrap:anywhere}.activity-panel .platform-actions{align-items:center;justify-content:space-between}.activity-panel button:focus-visible{outline:2px solid var(--blue);outline-offset:3px}@media(max-width:700px){.activity-anchor{position:static}.activity-panel{position:fixed;top:72px;left:18px;right:18px;max-height:calc(100dvh - 170px)}.platform-shell .top-actions{gap:8px}.platform-shell .top-actions>.button,.activity-anchor>.button{padding-inline:10px}}
+
+
+
+.budget-publish-hint{font-size:13px;line-height:1.8;color:var(--muted);margin-top:16px}
+
+.quorum-panel{border:1px solid var(--border,#303638);border-radius:12px;padding:20px;margin:20px 0;background:var(--panel,#171d20)}
+.quorum-panel>p:not(.muted){display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}.quorum-panel dl{display:grid;grid-template-columns:1fr auto;gap:10px}.quorum-panel dd{margin:0;text-align:right}.quorum-panel .muted,.quorum-terms{font-size:14px;line-height:1.7;color:var(--text-muted,#a7b3b4)}
+
+.goal-composer>.quorum-terms{margin:0 26px 16px}@media(max-width:600px){.goal-composer>.quorum-terms{margin-inline:18px}}
+/* Passkey entry and delivery controls reuse the existing Worknet surfaces. */
+.mera-login{color:var(--text);background:var(--panel,#1e2531);border:1px solid var(--border);border-radius:16px;padding:28px;width:min(520px,calc(100% - 32px));max-height:calc(100dvh - 48px);overflow:auto}.mera-login::backdrop{background:#080c14b3}.mera-login p,.mera-login details{line-height:1.8;color:var(--muted)}.mera-login details{margin:20px 0}.mera-login a,.funding-guide a{color:#a9bcff}.funding-guide{margin:24px 0;padding:20px 0;border-block:1px solid var(--border)}.funding-guide p,.funding-guide li,.funding-guide small{line-height:1.8;color:var(--muted)}.funding-guide h2{font-size:18px}.funding-guide ol{padding-left:22px}.funding-guide li{margin:12px 0}.funding-address{display:flex;gap:10px;margin:10px 0}.funding-address input{min-width:0;flex:1;font:inherit;font-size:12px;padding:10px;background:#171b24;color:var(--text);border:1px solid var(--border);border-radius:8px}.private-delivery-option{margin:20px 0}.private-delivery-option label{display:flex;align-items:center;gap:10px}.private-delivery-option input{width:18px;height:18px}.private-delivery-option p,.private-delivery>p{font-size:13px;color:var(--muted);line-height:1.8}.private-delivery .button{margin:14px 0}.protocol-evidence{margin:20px 0;line-height:1.8;overflow-wrap:anywhere}.protocol-evidence dl{display:grid;grid-template-columns:auto 1fr;gap:8px 16px}.protocol-evidence dd{margin:0}.protocol-evidence a{color:#a9bcff}@media(max-width:520px){.funding-address{flex-wrap:wrap}.funding-address input{flex-basis:100%}.mera-login{padding:20px}.mera-login .platform-actions{align-items:stretch;flex-direction:column}.protocol-evidence dl{display:block}.protocol-evidence dd{margin-bottom:12px}}
+.private-delivery>p,.private-delivery>.button{margin-left:24px;margin-right:24px}.private-delivery-option{padding-inline:28px}@media(max-width:760px){html{scroll-padding-bottom:90px}.platform-shell button,.platform-shell input{scroll-margin-bottom:90px}.private-delivery-option{padding-inline:20px}}
+
+.account-setup{padding:24px;margin-bottom:28px;border:1px solid var(--border);border-radius:12px;background:var(--panel)}
+.account-setup h2{margin:0;font-size:20px}.account-setup p{line-height:1.8;color:var(--muted)}
+.account-setup ol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;list-style:none;padding:0;margin:24px 0}
+.account-setup li{border-top:2px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px;line-height:1.6;font-size:14px}
+.account-setup li[data-complete="true"]{border-color:var(--blue)}.account-setup li span{color:var(--muted)}
+.budget-reminder{margin-bottom:24px}.budget-reminder p{max-width:560px}.budget-reminder>.button{flex-shrink:0}
+.platform-footer.workspace-footer{display:block;margin-top:48px;line-height:1.8}.platform-footer>p{margin:0 0 14px}
+.platform-footer>div,.platform-footer nav{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px}.platform-footer>div{justify-content:space-between}
+.platform-footer a{display:inline-flex;align-items:center;min-height:44px;color:var(--muted);text-decoration:none}.platform-footer a:hover{color:var(--text);text-decoration:underline}
+.mera-attribution{font-size:13px}.mera-attribution a:focus-visible,.platform-footer a:focus-visible{outline:2px solid var(--blue);outline-offset:4px}
+@media(max-width:760px){.account-setup{padding:20px}.account-setup ol{grid-template-columns:1fr;gap:14px}.budget-reminder{align-items:stretch;flex-direction:column}.platform-footer>div{align-items:flex-start;flex-direction:column}}

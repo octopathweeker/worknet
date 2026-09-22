@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { createPublicClient, createWalletClient, http, bytesToHex, erc20Abi, type Address } from 'viem';
+import { createPublicClient, createWalletClient, http, bytesToHex, erc20Abi, decodeFunctionData, type Address } from 'viem';
 import { monadTestnet } from 'viem/chains';
 import { mnemonicToAccount } from 'viem/accounts';
 import { requesterVaultAbi, taskManagerAbi } from '@agent-task/contracts';
@@ -25,7 +25,8 @@ test('two-user cloud coordinator survives signed transaction crash and settles i
   try {
     for (let i = 0; ; i++) { try { await client.getChainId(); break; } catch { if (i > 40) throw new Error('anvil startup timeout'); await new Promise(r => setTimeout(r, 100)); } }
     async function deploy(name: string, args: unknown[] = []) { const artifact = JSON.parse(readFileSync(`contracts/out/${name}.sol/${name}.json`, 'utf8')); const hash = await wallets[0]!.deployContract({ abi: artifact.abi, bytecode: artifact.bytecode.object, args }); const receipt = await client.waitForTransactionReceipt({ hash }); assert.equal(receipt.status, 'success'); return receipt.contractAddress!; }
-    const token = await deploy('MockUSDC'); const manager = await deploy('TaskManager', [token]); const factory = await deploy('RequesterVaultFactory', [manager, token]);
+    const testJudges = ['0x1111111111111111111111111111111111111111', '0x2222222222222222222222222222222222222222'];
+  const token = await deploy('MockUSDC'); const manager = await deploy('TaskManager', [token, testJudges, 1]); const factory = await deploy('RequesterVaultFactory', [manager, token]);
     const vaults: Address[] = [];
     for (const i of [3, 4]) {
       let hash = await wallets[0]!.writeContract({ address: token, abi: [...erc20Abi, { type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }], outputs: [] }], functionName: 'mint', args: [accounts[i]!.address, 1000000n] }); await client.waitForTransactionReceipt({ hash });
@@ -64,6 +65,42 @@ test('two-user cloud coordinator survives signed transaction crash and settles i
     for (const i of [3,4]) {
       const challenge = await (await api('auth/challenge', { address: accounts[i]!.address })).json() as any;
       const login = await api('auth/verify', { id: challenge.id, signature: await accounts[i]!.signMessage({ message: challenge.message }) }); assert.equal(login.status, 200); const cookie = login.headers.get('set-cookie')!.split(';')[0]!; cookies.push(cookie);
+      if (i === 3) {
+        // A funded vault with expired payment permission must recover without a deposit.
+        const vault = vaults[0]!;
+        const now = (await client.getBlock()).timestamp;
+        const expiredAuth = await wallets[i]!.writeContract({ address: vault, abi: requesterVaultAbi, functionName: 'authorizeAgent', args: [accounts[1]!.address, { validAfter: 0n, validUntil: now + 10n, maxPerTask: 200000n, maxTotalCommitment: 500000n }] });
+        await client.waitForTransactionReceipt({ hash: expiredAuth });
+        await client.request({ method: 'evm_increaseTime' as any, params: [11] as any });
+        await client.request({ method: 'evm_mine' as any });
+        const before = await (await api('account', undefined, cookie)).json() as any;
+        assert.equal(before.budget.vaultBalance, '500000');
+        assert.equal(before.budget.effectiveActive, false);
+        assert.equal(before.budget.newCommitmentCapacity, '0');
+        assert.equal((await api('setup', { id: crypto.randomUUID(), amount: '600000', mode: 'authorize' }, cookie)).status, 400);
+        const intent = { id: crypto.randomUUID(), amount: '500000', mode: 'authorize' };
+        const preparedResponse = await api('setup', intent, cookie); assert.equal(preparedResponse.status, 200);
+        const prepared = await preparedResponse.json() as any;
+        assert.equal(prepared.calls.length, 1, 'renewal contains no approve, deposit or token transfer');
+        assert.equal(decodeFunctionData({ abi: requesterVaultAbi, data: prepared.calls[0].callData }).functionName, 'authorizeAgent');
+        assert.deepEqual(await (await api('setup', intent, cookie)).json(), prepared, 'retry preserves exact authorization intent');
+        assert.equal((await api('setup', { ...intent, mode: 'recharge' }, cookie)).status, 409, 'renewal cannot be replayed as a deposit');
+        const hash = await wallets[i]!.sendTransaction({ to: prepared.calls[0].target, data: prepared.calls[0].callData });
+        assert.equal((await client.waitForTransactionReceipt({ hash })).status, 'success');
+        const after = await (await api('account', undefined, cookie)).json() as any;
+        assert.equal(after.budget.vaultBalance, before.budget.vaultBalance);
+        assert.equal(after.walletBalance, before.walletBalance);
+        assert.equal(after.budget.effectiveActive, true);
+        assert.equal(after.budget.newCommitmentCapacity, '500000');
+        assert(BigInt(after.chainTimestamp) >= now + 11n);
+        const renewedAuth = await client.readContract({ address: vault, abi: requesterVaultAbi, functionName: 'getAuthorization', args: [accounts[1]!.address] });
+        // Even if a retired wallet request arrives later, its expired final permission cannot
+        // overwrite the new epoch. This is why lost old batch status need not block publishing.
+        const late = await wallets[i]!.writeContract({ address: vault, abi: requesterVaultAbi, functionName: 'authorizeAgent', gas: 200000n, args: [accounts[1]!.address, { validAfter: 0n, validUntil: now + 10n, maxPerTask: 200000n, maxTotalCommitment: 500000n }] });
+        assert.equal((await client.waitForTransactionReceipt({ hash: late })).status, 'reverted');
+        assert.deepEqual(await client.readContract({ address: vault, abi: requesterVaultAbi, functionName: 'getAuthorization', args: [accounts[1]!.address] }), renewedAuth);
+
+      }
       const id = crypto.randomUUID(); const input = { id, goal: `独立用户 ${i} 的确定性转账统计任务`, kind: 'analysis', reward: '50000', fromBlock: '1', toBlock: '2' };
       assert.equal((await api('plans', input, cookie)).status, 200);
       const command = { id: crypto.randomUUID(), goalId: id }; commands.push(command.id);
@@ -76,14 +113,18 @@ test('two-user cloud coordinator survives signed transaction crash and settles i
     await coordinator.alarm(); assert.equal(db.prepare('SELECT status FROM platform_commands WHERE id=?').get(expiredCommand)!.status, 'failed');
     await coordinator.alarm(); assert(crashed, JSON.stringify(db.prepare('SELECT status,result FROM platform_commands').all())); assert.equal(db.prepare("SELECT count(*) n FROM platform_commands WHERE status='processing'").get()!.n, 1);
     coordinator = new PlatformCoordinator(ctx as any, env); // New process, same durable storage/database.
-    let quotaInjected = false;
+    let quotaInjected = false; let blockedGoal: any; let quotaCommand = ''; let followupCommand = '';
+    // Model the scheduler reaching the transient retry time without a wall-clock sleep.
+    db.exec("UPDATE platform_commands SET result=json_remove(result,'$.retryAt') WHERE status='processing'");
     for (let i = 0; i < 24; i++) {
       await coordinator.alarm();
       if (!quotaInjected && db.prepare("SELECT count(*) n FROM platform_goals WHERE json_extract(body,'$.task.status') IN (1,2,3)").get()!.n === 2) {
         memory.set(`gas:${new Date().toISOString().slice(0,10)}`, '3000000000000000000'); quotaInjected = true;
-        const blocked = {...expired, id: crypto.randomUUID(), spec: undefined}; blocked.input = {...blocked.input, id: blocked.id};
+        const blocked = {...expired, id: crypto.randomUUID(), spec: undefined}; blocked.input = {...blocked.input, id: blocked.id, execution: 'market'}; blockedGoal = blocked; quotaCommand = crypto.randomUUID(); followupCommand = crypto.randomUUID();
         db.prepare('INSERT INTO platform_goals(id,owner,body,updated_at) VALUES (?,?,?,0)').run(blocked.id, blocked.owner, JSON.stringify(blocked));
-        db.prepare("INSERT INTO platform_commands(id,owner,type,fingerprint,payload,created_at) VALUES (?,?,'launch','quota-fixture',?,0)").run(crypto.randomUUID(), blocked.owner, JSON.stringify({goalId:blocked.id}));
+        db.prepare("INSERT INTO platform_commands(id,owner,type,fingerprint,payload,created_at) VALUES (?,?,'launch','quota-fixture',?,0)").run(quotaCommand, blocked.owner, JSON.stringify({goalId:blocked.id}));
+        const existing = JSON.parse(String(db.prepare("SELECT body FROM platform_goals WHERE json_extract(body,'$.taskId') IS NOT NULL LIMIT 1").get()!.body));
+        db.prepare("INSERT INTO platform_commands(id,owner,type,fingerprint,payload,created_at) VALUES (?,?,'launch','followup-fixture',?,1)").run(followupCommand, existing.owner, JSON.stringify({goalId:existing.id}));
       }
       if (db.prepare("SELECT count(*) n FROM platform_goals WHERE json_extract(body,'$.status')='completed'").get()!.n === 2) break;
     }
@@ -97,5 +138,26 @@ test('two-user cloud coordinator survives signed transaction crash and settles i
     assert.equal(await client.readContract({ address: manager, abi: taskManagerAbi, functionName: 'totalEscrowed' }), 0n);
     assert.equal(db.prepare("SELECT count(*) n FROM platform_events WHERE json_extract(body,'$.event')='TaskSettled'").get()!.n, 2);
     assert(!memory.has('pending:operator')); assert(!memory.has('pending:worker'));
+    await coordinator.alarm(); await coordinator.alarm();
+    assert.equal(db.prepare('SELECT status FROM platform_commands WHERE id=?').get(quotaCommand)!.status, 'failed');
+    assert.equal(db.prepare('SELECT status FROM platform_commands WHERE id=?').get(followupCommand)!.status, 'complete', 'quota failure must not block a later idempotent publication');
+    const retryable = JSON.parse(String(db.prepare('SELECT body FROM platform_goals WHERE id=?').get(blockedGoal.id)!.body));
+    assert.equal(retryable.status, 'draft'); assert.equal(retryable.spec, undefined, 'unsigned spec must not expire while waiting for renewed quota');
+    assert(!memory.has(`tx:operator:launch:${blockedGoal.id}`));
+    const budgetHealth = JSON.parse(String(db.prepare("SELECT body FROM platform_health WHERE id='current'").get()!.body));
+    assert.equal(budgetHealth.gasBudget.limitWei, '2000000000000000000'); assert.equal(budgetHealth.gasBudget.remainingWei, '0');
+    // A reviewed configuration increase permits an explicit retry of the SAME goal.
+    env.PLATFORM_DAILY_GAS_LIMIT_MON = '5';
+    const retryId = crypto.randomUUID();
+    assert.equal((await api('launch', {id:retryId, goalId:blockedGoal.id}, cookies[0])).status, 202);
+    await coordinator.alarm();
+    assert.equal(db.prepare('SELECT status FROM platform_commands WHERE id=?').get(retryId)!.status, 'complete');
+    const recovered = JSON.parse(String(db.prepare('SELECT body FROM platform_goals WHERE id=?').get(blockedGoal.id)!.body));
+    assert.equal(recovered.taskId, '3'); assert.equal(recovered.error, undefined);
+    assert.equal(await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTaskByRequestId',args:[recovered.vault,recovered.spec.clientRequestId]}),3n);
+    assert.equal((await api('launch', {id:retryId, goalId:blockedGoal.id}, cookies[0])).status, 202);
+    await coordinator.alarm();
+    assert.equal(await client.readContract({address:manager,abi:taskManagerAbi,functionName:'totalEscrowed'}),50000n,'retry must escrow exactly one task reward');
+
   } finally { globalThis.fetch = nativeFetch; db.close(); anvil.kill('SIGTERM'); }
 });

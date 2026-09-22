@@ -1,0 +1,26 @@
+{
+  "name": "@agent-task/judging",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agent-task/protocol": "workspace:*",
+    "@agent-task/contracts": "workspace:*",
+    "viem": "2.56.8",
+    "zod": "4.3.6",
+    "@agent-task/privacy": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

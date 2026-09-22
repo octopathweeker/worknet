@@ -10,10 +10,15 @@
   "dependencies": {
     "@agent-task/accounts": "workspace:*",
     "@agent-task/contracts": "workspace:*",
+    "@agent-task/identity": "workspace:*",
+    "@agent-task/judging": "workspace:*",
     "@agent-task/protocol": "workspace:*",
     "@agent-task/workspace": "workspace:*",
+    "@monad-crypto/mpp": "0.0.3",
+    "mppx": "0.10.1",
     "viem": "2.56.8",
-    "zod": "4.3.6"
+    "zod": "4.3.6",
+    "@agent-task/privacy": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260919.1",

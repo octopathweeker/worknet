@@ -9,6 +9,14 @@
       {
         "name": "PLATFORM",
         "class_name": "PlatformCoordinator"
+      },
+      {
+        "name": "HOSTED",
+        "class_name": "HostedRunner"
+      },
+      {
+        "name": "TOOL_PAYMENTS",
+        "class_name": "ToolPayments"
       }
     ]
   },
@@ -18,6 +26,18 @@
       "new_sqlite_classes": [
         "PlatformCoordinator"
       ]
+    },
+    {
+      "tag": "hosted-v1",
+      "new_sqlite_classes": [
+        "HostedRunner"
+      ]
+    },
+    {
+      "tag": "tool-payments-v1",
+      "new_sqlite_classes": [
+        "ToolPayments"
+      ]
     }
   ],
   "ai": {
@@ -25,7 +45,10 @@
   },
   "vars": {
     "PLATFORM_AI_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-    "PLATFORM_JUDGE_MODEL": "@cf/openai/gpt-oss-120b"
+    "PLATFORM_JUDGE_MODEL": "@cf/openai/gpt-oss-120b",
+    "PLATFORM_GENERATION_PROVIDER": "openrouter",
+    "PLATFORM_DAILY_GAS_LIMIT_MON": "5",
+    "OPENROUTER_FREE_MODELS": "nex-agi/nex-n2.5-mini:free,nex-agi/nex-n2.5-pro:free"
   },
   "d1_databases": [
     {
@@ -37,6 +60,18 @@
   "assets": {
     "directory": "../explorer/dist",
     "binding": "ASSETS",
-    "run_worker_first": true
-  }
+    "run_worker_first": [
+      "/internal/*",
+      "/platform/*",
+      "/api/*",
+      "/webhooks/*",
+      "/workspace/*",
+      "/bridge/*",
+      "/objects/*",
+      "/health",
+      "/dashboard",
+      "/services/*"
+    ]
+  },
+  "minify": true
 }

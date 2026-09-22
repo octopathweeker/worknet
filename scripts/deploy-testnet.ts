@@ -24,6 +24,10 @@ let journal: Journal;
 try { journal = JSON.parse(await readFile(journalFile, 'utf8')) as Journal; }
 catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; journal = { chainId: 10143, deployer: account.address, owner, token: TEST_USDC, contracts: {} }; }
 if (journal.chainId !== 10143 || journal.deployer.toLowerCase() !== account.address.toLowerCase() || journal.owner.toLowerCase() !== owner.toLowerCase() || journal.token !== TEST_USDC) throw new Error('Deployment journal belongs to another configuration');
+const judgeAddresses = (process.env.JUDGE_ADDRESSES ?? '').split(',').map(value => value.trim()).filter(Boolean);
+if (judgeAddresses.length === 0 || judgeAddresses.some(address => !/^0x[0-9a-fA-F]{40}$/.test(address)) || new Set(judgeAddresses.map(address => address.toLowerCase())).size !== judgeAddresses.length) throw new Error('JUDGE_ADDRESSES must list distinct judge addresses');
+const judgeThreshold = Number(process.env.JUDGE_THRESHOLD ?? 2);
+if (!Number.isInteger(judgeThreshold) || judgeThreshold < 1 || judgeThreshold > judgeAddresses.length) throw new Error('JUDGE_THRESHOLD must be 1..JUDGE_ADDRESSES.length');
 const persist = async () => { await writeFile(`${journalFile}.tmp`, JSON.stringify(journal, null, 2) + '\n', { mode: 0o600 }); await rename(`${journalFile}.tmp`, journalFile); };
 if (!process.argv.includes('--broadcast')) {
   console.log(JSON.stringify({ mode: 'plan-only', chainId: 10143, deployer: account.address, owner, agent, token: TEST_USDC, nativeBalanceWei: (await client.getBalance({ address: account.address })).toString(), completedContracts: Object.keys(journal.contracts), storageReady: Boolean(storage), next: 'Run pnpm testnet:deploy --broadcast after funding deployer. Without STORAGE_URL, only contracts and a pending config are created; runtime cannot start.' }, null, 2));
@@ -57,10 +61,11 @@ if (!process.argv.includes('--broadcast')) {
       console.log(JSON.stringify({ contract: name, address: record.address, transactionHash: record.hash }));
       return record.address;
     }
-    const manager = await deploy('TaskManager', [TEST_USDC]);
+    const manager = await deploy('TaskManager', [TEST_USDC, judgeAddresses, judgeThreshold]);
     const vault = await deploy('RequesterVault', [owner, manager, TEST_USDC]);
     const config = { mode: 'testnet', chainId: 10143, rpcUrl, token: TEST_USDC, manager, vault, owner, agent,
       deploymentBlock: journal.contracts.TaskManager!.block, ...(storage ? { storageUrl: storage.origin } : {}), finality: 'finalized', sourceHosts: ['docs.monad.xyz', 'monad.xyz', 'www.monad.xyz'], tokenLabel: 'Test USDC',
+      judges: { accounts: judgeAddresses, threshold: judgeThreshold }, ...(process.env.JUDGE_URLS ? { judgeUrls: process.env.JUDGE_URLS.split(',').map(value => value.trim()) } : {}),
       deployedBytecodeHash: { manager: keccak256((await client.getCode({ address: manager }))!), vault: keccak256((await client.getCode({ address: vault }))!) },
     };
     const configName = storage ? 'config.json' : 'config.pending.json';

@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { mnemonicToAccount } from 'viem/accounts';
 import { bytesToHex, type Hex } from 'viem';
-import { loadConfig, checkChain, State, Signer, HttpStorage, startStorage, Requester, transferTask, WorkerRuntime, transferHandler, Reviewer, configuredModel, researchTask, researchHandler, researchVerifier, json, workerAccepting, writeWorkerReport, publicFailure, type WorkerReport } from '@agent-task/runtime';
+import { loadConfig, checkChain, State, Signer, HttpStorage, startStorage, Requester, transferTask, WorkerRuntime, transferHandler, Reviewer, configuredModel, researchTask, researchHandler, researchVerifier, json, workerAccepting, writeWorkerReport, publicFailure, getTask, quorumTask, quorumResult, type WorkerReport } from '@agent-task/runtime';
 import { parseTaskSpec } from '@agent-task/protocol';
+import { taskManagerAbi } from '@agent-task/contracts';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   config: { type: 'string', default: '.runtime/config.json' }, db: { type: 'string' },
@@ -49,6 +50,25 @@ if (command === 'storage') {
       const key = `research-spec:${values.key}`;
       const spec = state.get<ReturnType<typeof researchTask>>(key) ?? researchTask(config, values.key!, Number((await signer.client.getBlock()).timestamp) + 900, values.mode as 'extractive' | 'llm');
       state.set(key, spec); log(await requester.hire(spec));
+    } else if (command === 'demo-quorum') {
+      const quality = values.mode === 'partial' ? 'partial' : 'complete';
+      const specKey = `quorum-spec:${values.key}`;
+      const spec = state.get<ReturnType<typeof quorumTask>>(specKey) ?? quorumTask(config, values.key!, Number((await signer.client.getBlock()).timestamp) + 900, quality);
+      state.set(specKey, spec); const { taskId } = await requester.hire(spec);
+      let workerKey = process.env.WORKER_PRIVATE_KEY as Hex | undefined;
+      if (config.mode === 'local-demo') workerKey = bytesToHex(mnemonicToAccount('test test test test test test test test test test test junk', { addressIndex: 4 }).getHdKey().privateKey!);
+      if (!workerKey) throw new Error('WORKER_PRIVATE_KEY is required outside local-demo');
+      const workerState = new State(values.db ?? path.join(path.dirname(values.config!), 'account-4.db'));
+      const workerSigner = new Signer(config, workerState, workerKey);
+      try {
+        const workerStorage = new HttpStorage(config.storageUrl, process.env.STORAGE_UPLOAD_TOKEN);
+        await workerSigner.write(config.manager, taskManagerAbi, 'claimTask', [taskId], `claim:${taskId}`);
+        const task = await getTask(workerSigner.client, config, taskId);
+        const result = quorumResult(config, taskId, task.attempt, workerSigner.account.address, task.specHash, quality);
+        const { hash, uri } = await workerStorage.put(result);
+        await workerSigner.write(config.manager, taskManagerAbi, 'submitResult', [taskId, task.attempt, hash, uri], `submit:${taskId}:${task.attempt}`);
+        log({ event: 'quorum-task-submitted', taskId: taskId.toString(), resultHash: hash });
+      } finally { await workerSigner.close(); workerState.close(); }
     } else if (command === 'reviewer') {
       const reviewer = new Reviewer(requester, researchVerifier(config.sourceHosts, configuredModel()), log);
       log({ event: 'reviewer-ready', account: signer.account.address });
@@ -76,6 +96,6 @@ if (command === 'storage') {
           if (!values.once && !stopped) await new Promise(resolve => setTimeout(resolve, 2500));
         } while (!values.once && !stopped);
       } finally { clearInterval(heartbeat); await reporting; }
-    } else throw new Error('Commands: storage | budget | hire --file | demo-task | worker | reviewer');
+    } else throw new Error('Commands: storage | budget | hire --file | demo-task | demo-quorum | worker | reviewer');
   } finally { await signer.close(); state.close(); }
 }

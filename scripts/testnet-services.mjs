@@ -45,6 +45,13 @@ try {
   await ready(`http://127.0.0.1:${port}/api/health`, value => value.ready);
   launch('transfer-worker', ['--env-file=.runtime/testnet-accounts/transferWorker.env', 'apps/cli/dist/main.js', 'worker', '--config', config, '--db', '.runtime/testnet/transfer-worker.db']);
   launch('research-worker', ['--env-file=.runtime/testnet-accounts/researchWorker.env', '--env-file=.runtime/local-model/model.env', 'apps/cli/dist/main.js', 'worker', '--config', config, '--db', '.runtime/testnet/research-worker.db', '--capability', 'research']);
+  for (const index of [1, 2, 3]) {
+    const envFile = `.runtime/testnet-accounts/judge${index}.env`;
+    if (await access(envFile).then(() => true, () => false)) {
+      launch(`judge-${index}`, ['--env-file=' + envFile, 'apps/judge/dist/main.js']);
+      await ready(`http://127.0.0.1:${8790 + index}/health`, value => value.ok);
+    }
+  }
   launch('workspace-bridge', ['--env-file=.runtime/testnet-accounts/requester.env', '--import', 'tsx', 'scripts/workspace-bridge.ts']);
   launch('dashboard-publisher', ['--env-file=.runtime/testnet-accounts/requester.env', '--import', 'tsx', 'scripts/publish-dashboard.ts']);
   const manifest = { startedAt: new Date().toISOString(), pid: process.pid, childPids: children.map(c => c.pid), config, api: `http://127.0.0.1:${port}`, logs: '.runtime/testnet' };

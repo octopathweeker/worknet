@@ -1861,11 +1861,20 @@ Requester says wrong
 
 这虽然不完美，但规则非常清楚。
 
+> **M6 更新（judge quorum）**：上两节描述的"无裁决"状态已经演进。TaskManager 现在提供
+> permissionless 的 `settleWithVerdicts`：M-of-N 个部署时注册的 judge 对
+> `Verdict(taskId, attempt, resultHash, completionBps)` 做 EIP-712 签名，合约链上取
+> 完成度中位数，按比例向 worker 放款、余额退回 requester。`jev.quorum` profile 的
+> 任务由独立 judge 节点（TypeSafe JEV Score）评审完成度。Requester 单边 accept/reject
+> 仍是确定性 profile 的快速路径；本节的"为什么不做完整 Dispute"仍然成立——没有
+> staking、没有 judge 治理，judge 集合部署后不可变（联盟式信任假设）。
+
 ---
 
 # 52. Future Dispute State
 
-未来可以演化：
+（M6 注：`DISPUTED`/仲裁仍未实现；但按完成度分账已由 `settleWithVerdicts` 的 judge
+quorum 通道落地，见第 51 节更新。）未来可以演化：
 
 ```text
 SUBMITTED

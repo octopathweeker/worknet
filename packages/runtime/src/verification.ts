@@ -1,11 +1,12 @@
 import { requesterVaultAbi, taskManagerAbi } from '@agent-task/contracts';
 import { assertTaskSpecBinding, canonicalJson, hashJson, validateTaskSpec, type TaskSpec, type ResultManifest } from '@agent-task/protocol';
 import type { Hex } from 'viem';
-import { getTask, getCachedTask, scanTasks } from './chain.js';
+import { getTask, getCachedTask, scanTasks, type OnchainTask } from './chain.js';
 import { Requester } from './requester.js';
 import { transferHandler, type HandlerContext } from './worker.js';
 import { checkOutputSchema } from './schema.js';
 import { publicFailure } from './errors.js';
+import { JUDGE_QUORUM_PROFILE, JUDGE_QUORUM_PROFILE_VERSION, collectVerdicts, medianBps } from './judges.js';
 
 export interface Check { name: string; passed: boolean; detail: string; }
 export interface Evidence {
@@ -78,13 +79,29 @@ export class Reviewer {
       if (paused || !authorization.active || now < authorization.validAfter || now >= authorization.validUntil) continue;
       const authority = await client.readContract({ address: config.vault, abi: requesterVaultAbi, functionName: 'getTaskAuthority', args: [id] });
       if (authority.operator.toLowerCase() !== signer.account.address.toLowerCase() || authority.epoch !== authorization.epoch) continue;
+      const specKey = `spec:${config.chainId}:${config.manager}:${task.specHash}`;
+      let spec = state.get<TaskSpec>(specKey);
+      if (!spec) { spec = validateTaskSpec(await this.requester.storage.get(task.specURI, task.specHash)); state.set(specKey, spec); }
+      const quorum = spec.verification.profile === JUDGE_QUORUM_PROFILE && spec.verification.profileVersion === JUDGE_QUORUM_PROFILE_VERSION;
       const key = `verification:${config.chainId}:${config.manager}:${id}:${task.attempt}:${task.resultHash}`;
       let evidence = state.get<Evidence>(key);
       const retry = state.get<{ count: number; nextAt: string }>(`retry:${key}`) ?? { count: 0, nextAt: '0' };
       if (!evidence || evidence.verdict === 'unverifiable' && retry.count < 3 && now >= BigInt(retry.nextAt)) {
-        evidence = await verify(this.requester, id, this.research); state.set(key, evidence);
-        state.set(`retry:${key}`, { count: retry.count + 1, nextAt: (now + BigInt(Math.min(60, 5 * 2 ** retry.count))).toString() });
-        this.log({ event: 'verified', taskId: id.toString(), verdict: evidence.verdict, checks: evidence.checks });
+        if (quorum) evidence = await this.settleByQuorum(id, task, spec, key, retry, now);
+        else {
+          evidence = await verify(this.requester, id, this.research); state.set(key, evidence);
+          state.set(`retry:${key}`, { count: retry.count + 1, nextAt: (now + BigInt(Math.min(60, 5 * 2 ** retry.count))).toString() });
+          this.log({ event: 'verified', taskId: id.toString(), verdict: evidence.verdict, checks: evidence.checks });
+        }
+      }
+      if (quorum) {
+        if (evidence.verdict === 'unverifiable' && now + 30n < task.reviewDeadline) continue;
+        const fresh = await getTask(client, config, id);
+        if (fresh.status !== 2 || fresh.attempt !== task.attempt || fresh.resultHash !== task.resultHash) continue;
+        const current = (await client.getBlock()).timestamp;
+        if (current >= fresh.reviewDeadline) continue;
+        if (evidence.verdict === 'unverifiable') await this.requester.reject(id, task.attempt, task.resultHash, hashJson(evidence));
+        continue;
       }
       if (evidence.verdict === 'unverifiable' && now + 30n < task.reviewDeadline) continue;
       const fresh = await getTask(client, config, id);
@@ -97,6 +114,31 @@ export class Reviewer {
         state.set(actionRetryKey, { nextAt: Date.now() + 10000 });
         this.log({ event: 'review-task-error', taskId: id.toString(), error: error instanceof Error ? error.name : 'UnknownError' });
       }
+    }
+  }
+
+  private async settleByQuorum(id: bigint, task: OnchainTask, spec: TaskSpec, key: string, retry: { count: number; nextAt: string }, now: bigint): Promise<Evidence> {
+    const { config, client } = this.requester.signer; const { state } = this.requester;
+    const base = { protocol: 'agent-task/0.1' as const, settlementChainId: String(config.chainId), taskManager: config.manager.toLowerCase(), taskId: id.toString(), attempt: task.attempt.toString(), specHash: task.specHash, resultHash: task.resultHash, profile: spec.verification.profile, profileVersion: spec.verification.profileVersion };
+    const finish = (evidence: Evidence): Evidence => {
+      state.set(key, evidence);
+      state.set(`retry:${key}`, { count: retry.count + 1, nextAt: (now + BigInt(Math.min(60, 5 * 2 ** retry.count))).toString() });
+      return evidence;
+    };
+    try {
+      if (!config.judgeUrls) throw new Error('JUDGE_QUORUM_UNAVAILABLE');
+      const judgesKey = `judges:${config.chainId}:${config.manager.toLowerCase()}`;
+      const cached = state.get<{ threshold: number }>(judgesKey);
+      const threshold = cached?.threshold ?? Number(await client.readContract({ address: config.manager, abi: taskManagerAbi, functionName: 'judgeThreshold' }));
+      if (!cached) state.set(judgesKey, { threshold });
+      const { result } = await this.requester.submission(id);
+      const verdicts = await collectVerdicts(config.judgeUrls, { spec, result, taskId: id.toString(), attempt: task.attempt.toString(), resultHash: task.resultHash, specHash: task.specHash }, threshold);
+      const median = medianBps(verdicts.map(verdict => verdict.completionBps));
+      await this.requester.settleByVerdict(id, task.attempt, task.resultHash, verdicts.map(verdict => verdict.completionBps), verdicts.map(verdict => verdict.signature));
+      this.log({ event: 'verdict-settled', taskId: id.toString(), medianBps: median, verdicts: verdicts.map(({ judge, completionBps }) => ({ judge, completionBps })) });
+      return finish({ ...base, verdict: 'accept', checks: [...verdicts.map(({ judge, completionBps }) => ({ name: `judge:${judge}`, passed: true, detail: `${completionBps} bps` })), { name: 'quorum-median', passed: true, detail: `${median} bps median settled onchain` }], checkedAt: new Date().toISOString() });
+    } catch (error) {
+      return finish({ ...base, verdict: 'unverifiable', checks: [{ name: 'judge-quorum', passed: false, detail: publicFailure(error) }], checkedAt: new Date().toISOString() });
     }
   }
 }

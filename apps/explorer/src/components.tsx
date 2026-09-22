@@ -1,3 +1,4 @@
+import {t as tr,locale} from './i18n';
 import React, { useEffect, useRef } from 'react';
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
@@ -21,9 +22,9 @@ export function Brand() { return <span className="brand"><svg width="32" height=
 export function Dialog({ title, children, onClose }: { title: string; children: React.ReactNode; onClose(): void }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const before = document.activeElement as HTMLElement | null; ref.current?.showModal(); (ref.current?.querySelector('input,textarea') as HTMLElement | null)?.focus(); return () => { ref.current?.close(); before?.focus(); }; }, []);
-  return <dialog ref={ref} className="dialog" aria-labelledby="dialog-heading" onCancel={e => { e.preventDefault(); onClose(); }} onClick={e => { if (e.target === ref.current) onClose(); }}><div className="dialog-inner"><button type="button" className="icon-button dialog-close" onClick={onClose} aria-label="关闭"><Icon name="close"/></button><h2 id="dialog-heading">{title}</h2>{children}</div></dialog>;
+  return <dialog ref={ref} className="dialog" aria-labelledby="dialog-heading" onCancel={e => { e.preventDefault(); onClose(); }} onClick={e => { if (e.target === ref.current) onClose(); }}><div className="dialog-inner"><button type="button" className="icon-button dialog-close" onClick={onClose} aria-label={tr("关闭")}><Icon name="close"/></button><h2 id="dialog-heading">{title}</h2>{children}</div></dialog>;
 }
 export function Money({ amount = '0' }: { amount?: string }) { return <>{formatMoney(amount)}</>; }
-export function formatMoney(amount = '0') { try { const n = BigInt(amount); return `${(n / 1000000n).toLocaleString()}.${((n % 1000000n) / 10000n).toString().padStart(2, '0')}`; } catch { return '—'; } }
-export function relative(date: string) { const mins = Math.max(0, Math.floor((Date.now() - Date.parse(date)) / 60000)); return mins < 1 ? '刚刚' : mins < 60 ? `${mins} 分钟前` : mins < 1440 ? `${Math.floor(mins / 60)} 小时前` : new Date(date).toLocaleDateString(); }
+export function formatMoney(amount = '0') { try { const n = BigInt(amount); return `${(n / 1000000n).toLocaleString(locale())}.${((n % 1000000n) / 10000n).toString().padStart(2, '0')}`; } catch { return '—'; } }
+export function relative(date: string) { const mins = Math.max(0, Math.floor((Date.now() - Date.parse(date)) / 60000)); return tr(mins < 1 ? '刚刚' : mins < 60 ? `${mins} 分钟前` : mins < 1440 ? `${Math.floor(mins / 60)} 小时前` : new Date(date).toLocaleDateString(locale())); }
 export function short(address = '') { return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : '—'; }

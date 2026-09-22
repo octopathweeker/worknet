@@ -1,6 +1,12 @@
+import { mppService } from './mpp-service.js';
+import { internalModel } from './internal-model.js';
+import { quicknodeWebhook } from './quicknode-webhook.js';
 import { workspaceApi } from './workspace-api.js';
+import { takerApi } from './taker-api.js';
 import { platformApi } from './platform-api.js';
 import type { DurableObjectNamespace, Ai } from '@cloudflare/workers-types';
+export { ToolPayments } from './tool-payments.js';
+export { HostedRunner } from './hosted-runner.js';
 export { PlatformCoordinator } from './platform-coordinator.js';
 import { hashJson, parseJsonBytes } from '@agent-task/protocol/json';
 import { keccak256 } from 'viem';
@@ -12,7 +18,8 @@ export interface ObjectBucket {
   put(key: string, value: Uint8Array, options: { httpMetadata: { contentType: string } }): Promise<unknown>;
 }
 interface Statement { bind(...values: unknown[]): Statement; first<T>(): Promise<T | null>; run(): Promise<unknown>; }
-export interface Env { OBJECTS?: ObjectBucket; DB?: { prepare(sql: string): Statement }; ASSETS?: { fetch(request: Request): Promise<Response> }; STORAGE_UPLOAD_TOKEN?: string; WORKSPACE_ACCESS_CODE?: string; PLATFORM?: DurableObjectNamespace; PLATFORM_CONFIG?: string; PLATFORM_OPERATOR_KEY?: string; PLATFORM_WORKER_KEY?: string; PLATFORM_SPONSOR_KEY?: string; AI?: Ai; PLATFORM_AI_MODEL?: string; PLATFORM_JUDGE_MODEL?: string; }
+export interface Env { WORKNET_ENVIRONMENT?: string; WORKNET_PUBLIC_ORIGIN?: string; }
+export interface Env { DELIVERY_REVIEW_KEY?: string; MPP_SERVICE_CONFIG?: string; MPP_SERVICE_SECRET?: string; ERC8004_CONFIG?: string; MPP_TOOL_CONFIG?: string; MPP_PAYER_KEY?: string; TOOL_PAYMENTS?: DurableObjectNamespace; MODEL_GATEWAY?: { fetch(request: Request): Promise<Response> } | undefined; MODEL_GATEWAY_TOKEN?: string; JUDGE_SERVICE_TOKEN?: string; JUDGE_1?: { fetch(request: Request): Promise<Response> }; JUDGE_2?: { fetch(request: Request): Promise<Response> }; JUDGE_3?: { fetch(request: Request): Promise<Response> }; OBJECTS?: ObjectBucket; DB?: { prepare(sql: string): Statement }; ASSETS?: { fetch(request: Request): Promise<Response> }; STORAGE_UPLOAD_TOKEN?: string; WORKSPACE_ACCESS_CODE?: string; PLATFORM?: DurableObjectNamespace; HOSTED?: DurableObjectNamespace; PLATFORM_CONFIG?: string; PLATFORM_OPERATOR_KEY?: string; PLATFORM_WORKER_KEY?: string; PLATFORM_SPONSOR_KEY?: string; PLATFORM_DAILY_GAS_LIMIT_MON?: string; AI?: Ai; PLATFORM_AI_MODEL?: string; PLATFORM_JUDGE_MODEL?: string; PLATFORM_GENERATION_PROVIDER?: string; OPENROUTER_API_KEY?: string; OPENROUTER_FREE_MODELS?: string; QUICKNODE_RPC_URL?: string; QUICKNODE_WEBHOOK_SECRET?: string; }
 function bucketFor(env: Env): ObjectBucket {
   if (env.OBJECTS) return env.OBJECTS;
   const db = env.DB; if (!db) throw new Error('STORE_NOT_CONFIGURED');
@@ -50,6 +57,10 @@ async function bounded(request: Request): Promise<Uint8Array> {
 }
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (new URL(request.url).pathname.startsWith('/services/')) return mppService(request, env);
+    if (new URL(request.url).pathname.startsWith('/internal/')) return internalModel(request, env);
+    if (new URL(request.url).pathname === '/webhooks/quicknode') return quicknodeWebhook(request, env);
+    if (new URL(request.url).pathname.startsWith('/platform/taker/')) return takerApi(request, env);
     if (new URL(request.url).pathname.startsWith('/platform/')) return platformApi(request, env);
     if (/^\/(workspace|bridge)\//.test(new URL(request.url).pathname)) return workspaceApi(request, env);
     const headers = new Headers({ 'content-type': 'application/json; charset=utf-8', 'x-content-type-options': 'nosniff', 'access-control-allow-origin': '*' });

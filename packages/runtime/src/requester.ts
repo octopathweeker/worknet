@@ -53,6 +53,7 @@ export class Requester {
   }
   async accept(id: bigint, attempt: bigint, hash: Hex) { return this.signer.write(this.signer.config.vault, requesterVaultAbi, 'acceptResult', [id, attempt, hash], `accept:${id}:${attempt}:${hash}`); }
   async reject(id: bigint, attempt: bigint, hash: Hex, reason: Hex) { return this.signer.write(this.signer.config.vault, requesterVaultAbi, 'rejectResult', [id, attempt, hash, reason], `reject:${id}:${attempt}:${hash}`); }
+  async settleByVerdict(id: bigint, attempt: bigint, hash: Hex, completionBps: number[], signatures: Hex[]) { return this.signer.write(this.signer.config.manager, taskManagerAbi, 'settleWithVerdicts', [id, attempt, hash, completionBps, signatures], `verdict:${id}:${attempt}:${hash}`); }
   async cancel(id: bigint) { return this.signer.write(this.signer.config.vault, requesterVaultAbi, 'cancelTask', [id], `cancel:${id}`); }
 }
 

@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { privateKeyToAccount } from 'viem/accounts';
 import { encodeAbiParameters, keccak256, stringToHex, type Address } from 'viem';
 import { platformApi } from '../apps/object-store/src/platform-api.js';
-import { makeTask, taskParams, planSchema, researchUrl, type PlatformConfig } from '../apps/object-store/src/platform-domain.js';
+import { makeTask, taskParams, planSchema, researchUrl, publicPlatformError, type PlatformConfig } from '../apps/object-store/src/platform-domain.js';
 import { validateTaskSpec, toCreateTaskParams } from '@agent-task/protocol';
 import { hashJson } from '@agent-task/protocol/json';
 import { exactPermission, permissionTypedData, redeemPermission } from '@agent-task/accounts';
@@ -63,6 +63,10 @@ test('platform login is nonce-bound; user data and commands are isolated; CSRF a
     assert.equal((await call(`commands/${launch.id}`, undefined, b)).status, 404);
     assert.equal((await call(`commands/${launch.id}`, undefined, a)).status, 200);
     assert.equal(db.prepare('SELECT count(*) n FROM platform_commands').get()!.n, 1);
+    const queuedGoal=(await (await call('goals',undefined,a)).json() as any).goals[0];
+    assert.equal(queuedGoal.publication.id,launch.id);assert.equal(queuedGoal.publication.status,'queued');
+    db.prepare("UPDATE platform_commands SET status='failed',result=? WHERE id=?").run(JSON.stringify({error:'今日额度不足'}),launch.id);
+    const failedGoal=(await (await call('goals',undefined,a)).json() as any).goals[0];assert.equal(failedGoal.publication.error,'今日额度不足');
     assert.equal(wakes, 2);
     assert.equal((await call('plans', { ...input, id: crypto.randomUUID() }, a, 'https://evil.test')).status, 403);
     assert.equal((await call('logout', {}, a)).status, 200); assert.equal((await call('goals', undefined, a)).status, 401);
@@ -132,4 +136,16 @@ test('budget amount uses six decimals and rejects unsupported precision and limi
   assert.equal(parseBudgetAmount('5'), '5000000');
   assert.equal(parseBudgetAmount('0.123456'), '123456');
   for (const value of ['10', '5.000001', '0.009999', '0.5000001', '1e-1', '-0.5', 'NaN', '']) assert.throws(() => parseBudgetAmount(value), /0.01–5 test USDC/);
+});
+
+
+test('sponsorship limits are bounded and distinguish quota, transaction gas and market fee failures', async () => {
+  const {dailyGasLimit,sponsorshipBudget}=await import('../apps/object-store/src/platform-sponsorship.js');
+  assert.equal(dailyGasLimit(),2000000000000000000n);assert.equal(dailyGasLimit('5'),5000000000000000000n);
+  for(const value of ['0','6','5.01','-1','Infinity','1e2'])assert.throws(()=>dailyGasLimit(value));
+  const budget=sponsorshipBudget(3000000000000000000n,dailyGasLimit(),new Date('2026-09-19T14:00:00Z'));
+  assert.equal(budget.remainingWei,'0');assert.equal(budget.resetsAt,Date.parse('2026-09-20T00:00:00Z'));
+  assert.match(publicPlatformError('SPONSOR_DAILY_LIMIT'),/今日/);
+  assert.match(publicPlatformError('SPONSOR_TX_GAS_LIMIT'),/单笔/);
+  assert.match(publicPlatformError('SPONSOR_FEE_LIMIT'),/费率/);
 });

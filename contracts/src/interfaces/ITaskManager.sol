@@ -15,6 +15,10 @@ interface ITaskManager {
     error ResultHashMismatch();
     error RequestIdConflict(bytes32 clientRequestId);
     error IncorrectTokenAmount();
+    error InvalidJudgeSet();
+    error InvalidVerdictCount();
+    error UnknownJudge(address signer);
+    error DuplicateJudge();
 
     event TaskCreated(
         uint256 indexed taskId, address indexed requester, bytes32 indexed clientRequestId,
@@ -37,9 +41,15 @@ interface ITaskManager {
     );
     event TaskCancelled(uint256 indexed taskId, address indexed requester, uint128 refundedAmount);
     event TaskExpired(uint256 indexed taskId, address indexed requester, uint128 refundedAmount);
+    event VerdictSettled(
+        uint256 indexed taskId, address indexed worker, uint16 medianBps, uint128 workerAmount, uint128 refundAmount
+    );
 
     function settlementToken() external view returns (address);
     function totalEscrowed() external view returns (uint256);
+    function judges(uint256 index) external view returns (address);
+    function isJudge(address account) external view returns (bool);
+    function judgeThreshold() external view returns (uint8);
     function createTask(bytes32 clientRequestId, address operator, TaskTypes.CreateTaskParams calldata params)
         external returns (uint256 taskId);
     function claimTask(uint256 taskId) external returns (uint64 attempt);
@@ -47,6 +57,10 @@ interface ITaskManager {
     function acceptResult(uint256 taskId, uint64 expectedAttempt, bytes32 expectedResultHash) external;
     function rejectResult(uint256 taskId, uint64 expectedAttempt, bytes32 expectedResultHash, bytes32 reasonHash) external;
     function finalize(uint256 taskId) external;
+    function settleWithVerdicts(
+        uint256 taskId, uint64 expectedAttempt, bytes32 expectedResultHash,
+        uint16[] calldata completionBps, bytes[] calldata signatures
+    ) external;
     function releaseExpiredClaim(uint256 taskId) external;
     function expireTask(uint256 taskId) external;
     function cancelTask(uint256 taskId) external;

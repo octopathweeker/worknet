@@ -23,6 +23,7 @@ export const taskSpecSchema = {
     capability: { type: 'string', pattern: '^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$', maxLength: 96 },
     capabilityVersion: version, title: { type: 'string', minLength: 1, maxLength: 160 },
     instructions: { type: 'string', minLength: 1, maxLength: 16384 },
+    delivery: { type: 'object', additionalProperties: false, required: ['scheme', 'salt', 'publicKey', 'reviewPublicKey', 'rpId'], properties: { scheme: { const: 'worknet-delivery/1' }, salt: hash, publicKey: hash, reviewPublicKey: hash, rpId: { type: 'string', minLength: 1, maxLength: 253 } } },
     input: { type: 'object' }, outputSchema: { type: 'object' },
     reward: { type: 'object', additionalProperties: false, required: ['token', 'amountBaseUnits'], properties: { token: address, amountBaseUnits: positive } },
     execution: {

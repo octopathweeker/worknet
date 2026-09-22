@@ -9,7 +9,9 @@ interface FactoryVm { function prank(address) external; function expectRevert() 
 contract RequesterVaultFactoryTest {
     FactoryVm constant vm = FactoryVm(address(uint160(uint256(keccak256("hevm cheat code")))));
     function testPredictionIsolationAndPermissionlessIdempotence() external {
-        MockUSDC token = new MockUSDC(); TaskManager manager = new TaskManager(address(token));
+        MockUSDC token = new MockUSDC();
+        address[] memory judges = new address[](1); judges[0] = address(0x1234);
+        TaskManager manager = new TaskManager(address(token), judges, 1);
         RequesterVaultFactory factory = new RequesterVaultFactory(address(manager), address(token));
         address alice = address(0xA11CE); address bob = address(0xB0B);
         address expected = factory.predictVault(alice);

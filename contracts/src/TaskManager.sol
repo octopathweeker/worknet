@@ -4,6 +4,7 @@ pragma solidity 0.8.37;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ITaskManager} from "./interfaces/ITaskManager.sol";
 import {TaskTypes} from "./libraries/TaskTypes.sol";
 import {TaskRules} from "./libraries/TaskRules.sol";
@@ -11,16 +12,36 @@ import {TaskRules} from "./libraries/TaskRules.sol";
 contract TaskManager is ITaskManager, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
+    bytes32 private constant VERDICT_TYPEHASH =
+        keccak256("Verdict(uint256 taskId,uint64 attempt,bytes32 resultHash,uint16 completionBps)");
+    bytes32 private constant EIP712_DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 private immutable _verdictDomain;
+
     address public immutable settlementToken;
     uint256 public totalEscrowed;
     uint256 public nextTaskId = 1;
+    address[] public judges;
+    mapping(address => bool) public isJudge;
+    uint8 public judgeThreshold;
     mapping(uint256 => TaskTypes.Task) private tasks;
     mapping(address => mapping(bytes32 => uint256)) private requests;
     mapping(address => mapping(bytes32 => bytes32)) private requestHashes;
 
-    constructor(address token) {
+    constructor(address token, address[] memory judges_, uint8 threshold) {
         if (token.code.length == 0) revert InvalidParameters();
         settlementToken = token;
+        _verdictDomain = keccak256(abi.encode(
+            EIP712_DOMAIN_TYPEHASH, keccak256("WorknetJudge"), keccak256("1"), block.chainid, address(this)
+        ));
+        if (judges_.length == 0 || threshold < 1 || threshold > judges_.length) revert InvalidJudgeSet();
+        for (uint256 i = 0; i < judges_.length; i++) {
+            address judge = judges_[i];
+            if (judge == address(0)) revert InvalidJudgeSet();
+            if (isJudge[judge]) revert DuplicateJudge();
+            isJudge[judge] = true; judges.push(judge);
+        }
+        judgeThreshold = threshold;
     }
 
     function getTask(uint256 id) external view returns (TaskTypes.Task memory) { return _task(id); }
@@ -91,6 +112,50 @@ contract TaskManager is ITaskManager, ReentrancyGuard {
         TaskTypes.Task storage t = _task(id); _state(t, TaskTypes.Status.SUBMITTED);
         if (block.timestamp < t.reviewDeadline) revert DeadlineNotReached();
         _settle(id, t, TaskTypes.SettlementReason.REVIEW_TIMEOUT);
+    }
+
+    function settleWithVerdicts(uint256 id, uint64 attempt, bytes32 hash, uint16[] calldata bps, bytes[] calldata sigs)
+        external nonReentrant
+    {
+        TaskTypes.Task storage t = _task(id); _state(t, TaskTypes.Status.SUBMITTED);
+        _attempt(t, attempt);
+        if (hash != t.resultHash) revert ResultHashMismatch();
+        uint16 median = _verdictMedian(id, attempt, hash, bps, sigs);
+        uint128 workerAmount = uint128(uint256(t.rewardAmount) * median / 10000);
+        uint128 refundAmount = t.rewardAmount - workerAmount;
+        t.status = TaskTypes.Status.SETTLED; totalEscrowed -= t.rewardAmount;
+        IERC20 token = IERC20(settlementToken);
+        if (workerAmount > 0) token.safeTransfer(t.worker, workerAmount);
+        if (refundAmount > 0) token.safeTransfer(t.requester, refundAmount);
+        emit VerdictSettled(id, t.worker, median, workerAmount, refundAmount);
+        emit TaskSettled(id, t.requester, t.worker, attempt, hash, workerAmount, TaskTypes.SettlementReason.JUDGE_VERDICT);
+    }
+
+    function _verdictMedian(uint256 id, uint64 attempt, bytes32 hash, uint16[] calldata bps, bytes[] calldata sigs)
+        private view returns (uint16)
+    {
+        if (bps.length < judgeThreshold || bps.length != sigs.length) revert InvalidVerdictCount();
+        address[] memory seen = new address[](bps.length);
+        uint16[] memory votes = new uint16[](bps.length);
+        for (uint256 i = 0; i < bps.length; i++) {
+            if (bps[i] > 10000) revert InvalidParameters();
+            address signer = ECDSA.recover(
+                keccak256(abi.encodePacked(
+                    "\x19\x01", _verdictDomain, keccak256(abi.encode(VERDICT_TYPEHASH, id, attempt, hash, bps[i]))
+                )),
+                sigs[i]
+            );
+            if (!isJudge[signer]) revert UnknownJudge(signer);
+            for (uint256 j = 0; j < i; j++) if (seen[j] == signer) revert DuplicateJudge();
+            seen[i] = signer; votes[i] = bps[i];
+        }
+        // Insertion sort (N is bounded by judge count); even counts take the LOWER middle.
+        for (uint256 i = 1; i < votes.length; i++) {
+            uint16 v = votes[i]; uint256 j = i;
+            while (j > 0 && votes[j - 1] > v) { votes[j] = votes[j - 1]; j--; }
+            votes[j] = v;
+        }
+        return votes[(votes.length - 1) / 2];
     }
 
     function releaseExpiredClaim(uint256 id) external nonReentrant {
