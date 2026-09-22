@@ -28,7 +28,7 @@ export async function withAgentLock<T>(path:string,fn:()=>Promise<T>):Promise<T>
 
 export class AgentClient extends TakerClient {
   private readonly signer;
-  constructor(origin:string,token:string,key:Hex,private readonly executorId:string,private readonly path:string,signal?:AbortSignal){super(origin,token,signal);this.signer=privateKeyToAccount(key);}
+  constructor(origin:string,token:string,key:Hex,private readonly executorId:string,private readonly path:string,signal?:AbortSignal,onWork?:()=>Promise<void>){super(origin,token,signal,onWork);this.signer=privateKeyToAccount(key);}
   private async context(){
     const status=await this.request('/me');const grant=status.grant as AgentSessionGrant|undefined;
     if(!status.approved||!grant?.approved)throw new Error('PASSKEY_APPROVAL_REQUIRED: open the original approval URL and finish initial authorization.');
@@ -52,7 +52,7 @@ export class AgentClient extends TakerClient {
     return {...status,accountUrl,gasAddress:this.signer.address,rewardAddress:grant.owner,gasBalanceMON:formatEther(gas),chainRevoked:disabled,remainingCalls:remaining,maxGasPerTransactionMON:'0.2',maxActivationGasMON:'0.25',faucet:'https://faucet.monad.xyz/',next:disabled?'On-chain authority revoked; human reauthorization is required.':remaining<2?'Insufficient call allowance for a new task; human reauthorization is required.':gas===0n?'Fund gasAddress with test MON, then use take TASK_ID. No USDC budget deposit is needed.':'Ready to take tasks within the grant.'};
   }
   override async take(taskId:string){const {disabled,remaining}=await this.context();if(disabled)throw new Error('AGENT_GRANT_REVOKED');if(remaining<2)throw new Error('AGENT_CALL_LIMIT');return super.take(taskId);}
-  override claim(id:string){return this.execute(id,'claim');}
+  override async claim(id:string){const result=await this.execute(id,'claim');if(result.status==='confirmed')await this.recordWork();return result;}
   override submit(id:string){return this.execute(id,'submit');}
   private async execute(id:string,phase:'claim'|'submit'){
     if(!/^[0-9a-f-]{36}$/.test(id))throw new Error('Invalid run ID');

@@ -21,13 +21,17 @@ export class TakerApiError extends Error {
 }
 export class TakerClient {
   readonly origin: string;
-  constructor(origin: string, private readonly token?: string, readonly signal?: AbortSignal) { this.origin = platformUrl(origin); if (token && !/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid executor credential'); }
+  constructor(origin: string, private readonly token?: string, readonly signal?: AbortSignal, private readonly onWork?: () => Promise<void>) { this.origin = platformUrl(origin); if (token && !/^[a-f0-9]{64}$/.test(token)) throw new Error('Invalid executor credential'); }
   async request(path: string, body?: unknown, query?: URLSearchParams, timeoutMs = 45000): Promise<any> {
     if (!/^\/[a-z0-9/-]+$/.test(path)) throw new Error('Invalid API path');
     const response = await fetch(`${this.origin}/platform/taker${path}${query?.size ? `?${query}` : ''}`, { method: body === undefined ? 'GET' : 'POST', redirect:'error', signal:AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(this.signal ? [this.signal] : [])]), headers: { 'content-type':'application/json', ...(this.token ? {authorization:`Bearer ${this.token}`} : {}) }, ...(body === undefined ? {} : {body:JSON.stringify(body)}) });
     const reader=response.body?.getReader();if(!reader)throw new Error('Empty API response');let text='',size=0;const decoder=new TextDecoder();
     try { while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>2*1024*1024){await reader.cancel();throw new Error('API response too large');}text+=decoder.decode(part.value,{stream:true});}text+=decoder.decode(); } finally {reader.releaseLock();}
     const value=JSON.parse(text);if(!response.ok)throw new TakerApiError(response.status, value.code??'API_ERROR', value.error??'Request failed');return value;
+  }
+  protected async recordWork(){
+    try { await this.onWork?.(); }
+    catch { console.warn('Could not remember the last task account. Keep using the same WORKNET_TAKER_CONFIG.'); }
   }
   status(){return this.request('/me');}
   take(taskId:string){if(!/^[1-9][0-9]{0,76}$/.test(taskId))throw new Error('A task number is required');return this.request('/agent/take',{taskId});}
@@ -39,13 +43,13 @@ export class TakerClient {
   }
   run(id:string){return this.request(`/runs/${id}`);}
   claim(id:string){return this.request(`/runs/${id}/claim`,{});}
-  upload(id:string,execution:unknown){return this.request(`/runs/${id}/result`,execution);}
+  async upload(id:string,execution:unknown){const result=await this.request(`/runs/${id}/result`,execution);await this.recordWork();return result;}
   /** Off-chain, requester-visible report. Reuse update.id and content on retries. */
-  progress(id:string,update:{id:string;summary:string;percent?:number}){return this.request(`/runs/${id}/progress`,update,undefined,5000);}
+  async progress(id:string,update:{id:string;summary:string;percent?:number}){const result=await this.request(`/runs/${id}/progress`,update,undefined,5000);await this.recordWork();return result;}
   submit(id:string){return this.request(`/runs/${id}/submit`,{});}
   /** May spend the platform's bounded tool budget. Input and provider are fixed by the server. */
   purchaseTransfers(id:string){return this.request(`/runs/${id}/tools/transfers`,{});}
-  async waitClaim(id:string){for(let i=0;i<45;i++){const run=await this.run(id);if(Number(run.task.status)===1&&run.task.worker.toLowerCase()===run.owner&&String(run.task.attempt)===run.attempt)return run;if(Number(run.task.status)>=2) return run;if(run.revoked||run.superseded||!run.authorized)throw new Error('Run no longer active');await sleep(2000,undefined,this.signal?{signal:this.signal}:{});}throw new Error('Claim is still pending; resume the same run.');}
+  async waitClaim(id:string){for(let i=0;i<45;i++){const run=await this.run(id);if(Number(run.task.status)===1&&run.task.worker.toLowerCase()===run.owner&&String(run.task.attempt)===run.attempt){await this.recordWork();return run;}if(Number(run.task.status)>=2) return run;if(run.revoked||run.superseded||!run.authorized)throw new Error('Run no longer active');await sleep(2000,undefined,this.signal?{signal:this.signal}:{});}throw new Error('Claim is still pending; resume the same run.');}
   /** Pure execution capability: no signer or credential is passed to the handler. */
   async analyze(id:string) {
     const run=await this.run(id);const spec=validateTaskSpec(run.spec);

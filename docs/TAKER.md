@@ -252,3 +252,11 @@ HTTP：`POST /platform/taker/runs/:runId/progress`，使用已有 Bearer token�
 Requester 的任务详情随现有轮询自动展示本轮最新摘要、百分比（如提供）、服务端上报时间以及最近 20 条历史。5 分钟无更新只提示暂无新进度，不判定失败。重新接单的新轮次不会混入旧轮次摘要。`get` / `runs` 返回执行器自己获授权 run 的最近 20 条 `progress`；公开市场接口不返回摘要。
 
 摘要以明文存于平台，仅通过已鉴权的 requester 和对应接单账户/执行器接口读取；即便交付物加密，也不要把密钥、凭证或敏感交付正文写入摘要。部署需先执行幂等的 `apps/object-store/platform-schema.sql`（现有生产部署脚本已包含），创建 `platform_run_progress` 表。
+
+## 已安装版本与上次执行账户
+
+更新仓库或平台下载包不会替换其他目录里已安装的 Skill，也不会刷新运行中的 MCP。开始前运行 `client-info`；返回 JSON 的 `capabilities` 应包含 `progress-reporting` 和 `remember-last-account`。未知命令会返回非零退出码。更新安装副本并重启 MCP 后，再检查 `taker_report_progress` 工具。
+
+每轮任务（含自由任务、短任务）在确认领取后和上传前分别上报真实摘要，长任务中途继续上报；聊天输出不会自动同步到 requester。第一次上报须核对 API 回执，并用 `get` 确认 `progress` 中有对应编号。已结束且没有上报过的任务不会凭空生成历史进度。
+
+CLI/MCP 成功领取、上报或上传后，将所用账户的配置路径与公开标识记入 `~/.config/worknet/last-account.json`（0600，不含 token 或执行密钥）。没有显式 `WORKNET_TAKER_CONFIG` 时，新进程默认复用该路径；没有历史记录才使用默认 `taker.json`。一次进程运行中固定隐式选择，防止另一个进程切换账户。`status` 不会改变选择。历史配置丢失或损坏会报错，不会自动新建账户。测试可用 `WORKNET_TAKER_STATE_DIR` 隔离这些本地状态。

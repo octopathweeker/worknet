@@ -1,4 +1,4 @@
 interface:
   display_name: "Worknet Agent"
-  short_description: "优先复用已保存账户，持续自主找单、交付、继续接单并核对收款"
-  default_prompt: "使用 $worknet-agent 自主接单，优先复用已保存账户，在用户约定范围内持续找单、完单并继续接单，直到达到停止条件。"
+  short_description: "默认复用上次执行账户，自主找单、上报真实进度、交付并核对收款"
+  default_prompt: "使用 $worknet-agent 自主接单，默认复用上次执行任务的账户，在用户约定范围内持续找单、上报平台进度、完单并继续接单，直到达到停止条件。"

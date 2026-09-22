@@ -133,8 +133,8 @@ test('external taker permissions, isolated uploads, revoke/takeover and durable 
   assert.equal((await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTask',args:[3n]})).status,3);
   assert.equal(await client.readContract({address:token,abi:erc20Abi,functionName:'balanceOf',args:[taker!.address]}),150000n,'long-poll run settled to the taker');
   // First human approval -> funded local execution key -> autonomous claims and submissions.
-  const agentDirectory=await mkdtemp(join(tmpdir(),'worknet-agent-account-'));const originalConfig=process.env.WORKNET_TAKER_CONFIG;
-  process.env.WORKNET_TAKER_CONFIG=join(agentDirectory,'agent.json');
+  const agentDirectory=await mkdtemp(join(tmpdir(),'worknet-agent-account-'));const originalConfig=process.env.WORKNET_TAKER_CONFIG,originalStateDirectory=process.env.WORKNET_TAKER_STATE_DIR;
+  process.env.WORKNET_TAKER_CONFIG=join(agentDirectory,'agent.json');process.env.WORKNET_TAKER_STATE_DIR=agentDirectory;
   globalThis.fetch=async(input,init)=>{
     const url=String(input);
     if(url==='https://platform.test/platform/config')return new Response(JSON.stringify({manager,token,storageUrl:'https://platform.test',rpcWalletUrl:'https://taker-rpc.test'}));
@@ -178,6 +178,8 @@ test('external taker permissions, isolated uploads, revoke/takeover and durable 
     await autonomous.claim(taken.id);assert.equal((await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTask',args:[4n]})).worker.toLowerCase(),root.address.toLowerCase());
     await autonomous.claim(taken.id);assert.equal(await client.getTransactionCount({address:executionAccount.address}),nonceBefore+1,'claim retry must not spend twice');
     assert.equal(await client.getBalance({address:root.address}),0n,'the Mera root need not be funded for Agent operation');
+    const remembered=JSON.parse(readFileSync(join(agentDirectory,'last-account.json'),'utf8'));
+    assert.equal(remembered.configPath,process.env.WORKNET_TAKER_CONFIG);assert.equal(remembered.executorId,initial.id);assert.equal(remembered.token,undefined);
     const approved={...grant.permission,signature};
     const forbidden=[{target:token,value:0n,callData:encodeFunctionData({abi:erc20Abi,functionName:'transfer',args:[executionAccount.address,1n]})},{target:manager,value:1n,callData:encodeFunctionData({abi:taskManagerAbi,functionName:'claimTask',args:[5n]})},{target:manager,value:0n,callData:encodeFunctionData({abi:taskManagerAbi,functionName:'cancelTask',args:[5n]})}];
     for(const bad of forbidden)await assert.rejects(client.call({...redeemPermission(approved,[bad]),account:executionAccount}),/revert/i);
@@ -194,7 +196,7 @@ test('external taker permissions, isolated uploads, revoke/takeover and durable 
     await ok('taker/executors/revoke',{id:initial.id},rootCookie);await assert.rejects(freshClient.take('5'),/UNAUTHORIZED/);
     const revokedView=await ok('taker/agent/inspect',{id:initial.id},rootCookie);assert.equal(revokedView.state,'revoked');assert.equal(revokedView.grant.owner,root.address.toLowerCase());
     const renewed=await renewAgent();assert.notEqual(renewed.id,initial.id);assert.equal(renewed.signer,initial.signer);assert.equal((await renewAgent()).id,renewed.id);assert.equal((await loadConfig()).executionKey,local.executionKey);assert.equal((await (await configuredClient()).status()).approved,false,'renewal must wait for a new human approval');
-  }finally{globalThis.fetch=routedFetch;if(originalConfig===undefined)delete process.env.WORKNET_TAKER_CONFIG;else process.env.WORKNET_TAKER_CONFIG=originalConfig;await rm(agentDirectory,{recursive:true,force:true});}
+  }finally{globalThis.fetch=routedFetch;if(originalConfig===undefined)delete process.env.WORKNET_TAKER_CONFIG;else process.env.WORKNET_TAKER_CONFIG=originalConfig;if(originalStateDirectory===undefined)delete process.env.WORKNET_TAKER_STATE_DIR;else process.env.WORKNET_TAKER_STATE_DIR=originalStateDirectory;await rm(agentDirectory,{recursive:true,force:true});}
   db.prepare('UPDATE platform_executors SET expires_at=0').run();assert.equal((await call('taker/runs',undefined,'',tokens[0])).status,401);
  }finally{globalThis.fetch=nativeFetch;db.close();anvil.kill('SIGTERM');}
 });

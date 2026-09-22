@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {clientInfo} from './client-info.js';
 import {readFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {executeRun,watchAssignments} from './watch.js';
@@ -9,7 +10,8 @@ const [command,...args]=process.argv.slice(2);
 const print=(v:unknown)=>console.log(JSON.stringify(v,null,2));
 const id=()=>{if(!/^[0-9a-f-]{36}$/.test(args[0]??''))throw new Error('A run UUID is required');return args[0]!;};
 try {
- if(command==='mcp'){await createTakerMcp().connect(new StdioServerTransport());}
+ if(command==='client-info'||command==='--version'){print(clientInfo);}
+ else if(command==='mcp'){await createTakerMcp().connect(new StdioServerTransport());}
  else if(command==='init'){if(!args[0])throw new Error('init <platform-origin> [agent-name]');print(await initializeAgent(args[0],args[1]??'Worknet Agent'));}
  else if(command==='renew'){print(await renewAgent());}
  else if(command==='take'){if(!args[0])throw new Error('take <task-id>');print(await (await configuredClient()).take(args[0]));}
@@ -39,5 +41,6 @@ try {
   } finally {process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);}
  }
  else if(command==='run'){const result=await executeRun(await configuredClient(),id(),dirname(configPath()),{paidTools:args.includes('--paid-tool')});print(result.detail??result);}
- else {console.log('worknet-taker init <origin> [name] | renew | take <task-id> | pair <origin> [name] | status | tasks | runs | wait [cursor] | watch [--paid-tool] | get <run> | claim <run> | run <run> [--paid-tool] | tool <run> | progress <run> <update-uuid> <summary> [percent] | upload <run> <execution.json> | submit <run> | mcp\n--paid-tool and tool may spend the platform tool budget within its configured limits. Default analysis stays local and read-only.\nWORKNET_TAKER_CONFIG selects a private local credential file. Agent mode stores a restricted local execution key; the Mera account key remains with the Passkey.');}
+ else if(!command||command==='help'||command==='--help'){console.log('worknet-taker client-info | init <origin> [name] | renew | take <task-id> | pair <origin> [name] | status | tasks | runs | wait [cursor] | watch [--paid-tool] | get <run> | claim <run> | run <run> [--paid-tool] | tool <run> | progress <run> <update-uuid> <summary> [percent] | upload <run> <execution.json> | submit <run> | mcp\n--paid-tool and tool may spend the platform tool budget within its configured limits. Default analysis stays local and read-only.\nWORKNET_TAKER_CONFIG selects a private local credential file. Agent mode stores a restricted local execution key; the Mera account key remains with the Passkey.');}
+ else {throw new Error(`Unknown command: ${command}. Run --help; update the installed CLI if a documented command is missing.`);}
 }catch(e){console.error(String(e));process.exitCode=1;}
