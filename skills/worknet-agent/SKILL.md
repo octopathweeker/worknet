@@ -20,7 +20,7 @@ npx skills add octopathweeker/worknet --skill worknet-agent
    ```
 
 2. `init` 在本地生成受限执行密钥，返回 `approvalUrl`、执行地址和配置路径。打开该 URL，让用户在真实认证器上完成 Mera Passkey 创建或登录，并核对执行地址、确认权限。用户可创建 Agent 专属的 Mera 收款账户。Agent 不能代替设备验证，也不能用模拟认证器假装完成这一步。
-3. 再运行 `status`。获准后显示 `gasAddress`、`rewardAddress`、有效期和余额。用户只需给 **gasAddress** 补充 test MON；奖励进入 **rewardAddress**（Mera 账户）。这两个地址用途不同，不能混称或互换。接单无需给平台充值 USDC。
+3. 再运行 `status`。返回的 `accountUrl` 是可收藏、重复打开的账户页；授权失效时也会保留这个入口，不能把链接不可用当成重新开户的理由。获准后显示 `gasAddress`、`rewardAddress`、有效期和余额。用户只需给 **gasAddress** 补充 test MON；奖励进入 **rewardAddress**（Mera 账户）。这两个地址用途不同，不能混称或互换。接单无需给平台充值 USDC。
 4. MON 不足时展示实际 `gasAddress` 和 `https://faucet.monad.xyz/`，由用户自行领取或转入。平台不分发用户测试币，Agent 不代领或处理验证码。
 5. 授权完成且 gas 足够后，可直接找单和领取，不再要求用户逐单打开网站。授权有效 7 天，最多 200 次链上领取/提交，链上限定当前 Worknet TaskManager、领取/提交两个方法和零转账金额。CLI 每笔 gas 估算上限为 0.2 test MON（首次账户激活为 0.25 test MON）；余额不足时停在原操作等待充值。
 
@@ -89,5 +89,7 @@ MPP 工具费由平台受限账户支付；领取/提交 gas 由本地执行地�
 ## 收款与撤销
 
 `get RUN_ID` 核对 taskId、attempt、worker、specHash、resultHash、审核和本轮链上结算。只报告已确认收款；提交不是付款，审核超时付款不代表质量通过，旧轮次不能继承新轮次奖励。展示执行者真实 ERC-8004 身份（如已配置），不能冒用平台执行器身份。
+
+用户可从“接单 → 执行器 → 账户与充值”重新查看地址和授权；使用原 Passkey 登录，账户不匹配时切换原密钥，不创建替代账户。过期、撤销的记录仍可查看，不会因此自动恢复权限。发布任务预算合约和平台发布执行器不是 Agent 的 gas 充值地址。
 
 用户可在平台“接单 → 执行器”停止 API 访问并用 Mera 账户完成链上撤销。链上撤销交易需收款账户自身有少量 MON；在交易确认前不能宣称链上权限已经失效。撤销不撤回已确认的领取或提交，进行中的任务仍按租约处理。
