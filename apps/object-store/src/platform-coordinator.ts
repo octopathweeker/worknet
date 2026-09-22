@@ -183,6 +183,8 @@ export class PlatformCoordinator {
           if (!taskId) {
             const pendingId = await client.readContract({ address: config.manager, abi: taskManagerAbi, functionName: 'getTaskByRequestId', args: [goal.vault, goal.spec.clientRequestId as Hex] });
             if (pendingId) throw new Error('AWAITING_FINALITY');
+            // Retirement blocks fresh publication, but cannot discard an already signed outbox.
+            if (goal.input.execution !== 'market' && !await this.ctx.storage.get(`tx:operator:launch:${goal.id}`)) throw new Error('PLATFORM_EXECUTOR_DISABLED');
             if (paused || !authorization.active || authorization.validAfter > head.timestamp || authorization.validUntil <= BigInt(goal.spec.execution.taskDeadline + goal.spec.execution.reviewWindowSeconds) || params.rewardAmount > authorization.maxPerTask || params.rewardAmount + authorization.committed > authorization.maxTotalCommitment || balance < params.rewardAmount) throw new Error('BUDGET_UNAVAILABLE');
             await this.put(goal.spec);
             const receipt = await this.call('operator', `launch:${goal.id}`, goal.vault, requesterVaultAbi, 'createTask', [goal.spec.clientRequestId, params]);
@@ -197,7 +199,7 @@ export class PlatformCoordinator {
     } catch (error) {
       const text = String(error);
       // A deterministic contract revert must not keep a tenant's command at the head forever.
-      const permanent = /SPONSOR_DAILY_LIMIT|SPONSOR_TX_GAS_LIMIT|SPONSOR_FEE_LIMIT|BUDGET_UNAVAILABLE|INVALID_BLOCK_RANGE|SOURCE_NOT_ALLOWED|INTENT_EXPIRED|WRONG_DELEGATION|TRANSACTION_REVERTED|GOAL_NOT_FOUND|TAKER_REVOKED|TASK_UNAVAILABLE|RESULT_REQUIRED|execution reverted|reverted with/i.test(text);
+      const permanent = /PLATFORM_EXECUTOR_DISABLED|SPONSOR_DAILY_LIMIT|SPONSOR_TX_GAS_LIMIT|SPONSOR_FEE_LIMIT|BUDGET_UNAVAILABLE|INVALID_BLOCK_RANGE|SOURCE_NOT_ALLOWED|INTENT_EXPIRED|WRONG_DELEGATION|TRANSACTION_REVERTED|GOAL_NOT_FOUND|TAKER_REVOKED|TASK_UNAVAILABLE|RESULT_REQUIRED|execution reverted|reverted with/i.test(text);
       if (permanent) {
         // An unsigned publication may be retried explicitly with a fresh deadline. Never
         // replace a frozen spec once an outbox transaction exists, even after a revert.
@@ -226,6 +228,7 @@ export class PlatformCoordinator {
       if (run.revoked || !body.authorized || body.mode !== 'sponsored' || body.validUntil * 1000 <= Date.now() || run.executor_id && !await executorActive(this.env, run.executor_id, owner)) throw new Error('TAKER_REVOKED');
       const { task } = await marketTask(this.env, run.task_id);
       if (type === 'taker-claim') {
+        if (body.hostedAgent && task.status === 0) throw new Error('PLATFORM_EXECUTOR_DISABLED');
         if (task.status >= 1 && task.worker.toLowerCase() === owner && String(task.attempt) === run.attempt) return { reconciled: true, taskId: run.task_id, attempt: run.attempt };
         if (task.status !== 0 || String(task.attempt + 1n) !== run.attempt) throw new Error('TASK_UNAVAILABLE');
       } else {
@@ -293,10 +296,11 @@ export class PlatformCoordinator {
       }
       if (task.status === 0) {
         if (task.attempt >= 2n) { await event('operator', 'cancel-after-failed-attempts', goal.vault, requesterVaultAbi, 'cancelTask', [id]); goal.error = '两轮执行未完成，已取消并退还剩余托管奖励。'; await this.storeGoal(goal); return; }
-        if (goal.input.execution === 'market') { await this.storeGoal(goal); return; }
-        await event('worker', 'claim', config.manager, taskManagerAbi, 'claimTask', [id]); await this.storeGoal(goal); return;
+        // New claims belong to external agents. Already claimed legacy work below
+        // may finish, but this coordinator must never acquire another lease.
+        await this.storeGoal(goal); return;
       }
-      if (task.status === 1 && task.worker.toLowerCase() === config.worker.toLowerCase()) {
+      if (task.status === 1 && goal.input.execution !== 'market' && task.worker.toLowerCase() === config.worker.toLowerCase()) {
         if (task.claimLeaseExpiresAt - now < 45n) { goal.error = '执行租约即将到期，等待释放后恢复。'; await this.storeGoal(goal); return; }
         const jobAttempt = task.attempt; const jobKey = `result:${id}:${jobAttempt}`; let job = await this.ctx.storage.get<{ hash: Hex; uri: string }>(jobKey);
         if (!job) {

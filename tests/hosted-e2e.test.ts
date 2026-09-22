@@ -15,7 +15,7 @@ import {platformApi} from '../apps/object-store/src/platform-api.js';
 import {takerApi} from '../apps/object-store/src/taker-api.js';
 import type {Env} from '../apps/object-store/src/index.js';
 
-test('hosted actors isolate two users, stop in-flight output, recover artifacts and never submit failed inference', {timeout:150000}, async()=>{
+test('retired hosted entry points reject new runs while already-claimed legacy actors drain safely', {timeout:150000}, async()=>{
  const listener=createServer();await new Promise<void>(r=>listener.listen(0,'127.0.0.1',r));const port=(listener.address() as {port:number}).port;await new Promise<void>(r=>listener.close(()=>r()));
  const anvil=spawn('.tools/foundry/anvil',['--network','monad','--hardfork','MonadNine','--chain-id','10143','--port',String(port),'--silent'],{stdio:'ignore'});
  const rpc=`http://127.0.0.1:${port}`;const nativeFetch=globalThis.fetch;
@@ -70,21 +70,30 @@ const token=await deploy('MockUSDC');const manager=await deploy('TaskManager',[t
     const goalId=crypto.randomUUID();await ok('plans',{id:goalId,goal:`${marker}：按照约定来源独立执行并交付结果。`,kind,execution:'market',reward:'50000',...(kind==='analysis'?{fromBlock:'1',toBlock:'2'}:{sourceUrls:['https://docs.monad.xyz/hosted-fixture.md']})},rCookie);
     await ok('launch',{id:crypto.randomUUID(),goalId},rCookie);await coordinator.alarm();
     const goals=await ok('goals',undefined,rCookie);const goal=goals.goals.find((g:any)=>g.id===goalId);const id=crypto.randomUUID();
-    const plan=await ok('taker/runs/prepare',{id,taskId:goal.taskId,mode:'sponsored',hostedAgent:kind==='analysis'?'transfers-v1':'research-v1'},cookies[user]);
+    assert.equal((await call('taker/runs/prepare',{id,taskId:goal.taskId,mode:'sponsored',hostedAgent:kind==='analysis'?'transfers-v1':'research-v1'},cookies[user])).status,400);
+    assert.equal(db.prepare('SELECT count(*) n FROM platform_runs WHERE id=?').get(id)!.n,0);
+    // Seed a pre-retirement, already-claimed run through an external wallet.
+    const plan=await ok('taker/runs/prepare',{id,taskId:goal.taskId,mode:'sponsored'},cookies[user]);
     const account=accounts[user+4]!;await ok('taker/runs/authorize',{id,claimSignature:await account.signTypedData(plan.claimTypedData),submitSignature:await account.signTypedData(plan.submitTypedData)},cookies[user]);
+    await receipt(await wallets[user+4]!.writeContract({address:manager,abi:taskManagerAbi,functionName:'claimTask',args:[BigInt(goal.taskId)]}));
+    const agent=kind==='analysis'?'transfers-v1':'research-v1';
+    db.prepare("UPDATE platform_runs SET body=json_set(body,'$.hostedAgent',?) WHERE id=?").run(agent,id);
+    const at=new Date().toISOString();const data={id,owner:account.address.toLowerCase(),agent,agentName:'Legacy agent',taskId:goal.taskId,attempt:'1',status:'running',message:'Legacy work',metrics:{modelRequests:0,toolQueries:0,executionTries:0},costs:{serviceFeeBaseUnits:'0',computePayer:'platform',gasPayer:'platform',confirmedGasWei:null,gasTransactions:[]},logs:[],createdAt:at,updatedAt:at};
+    db.prepare('INSERT INTO platform_hosted_jobs(id,owner,agent,body,created_at,updated_at) VALUES (?,?,?,?,?,?)').run(id,data.owner,agent,JSON.stringify(data),Date.now(),Date.now());
+    await env.HOSTED!.get(env.HOSTED!.idFromName(id)).fetch('https://internal/wake',{method:'POST',body:JSON.stringify({id,owner:data.owner})});
     return{id,taskId:goal.taskId,goalId,user,runner:runners.get(id)!};
   };
   const a=await prepare(0,'research','ALPHA_PRIVATE');const b=await prepare(1,'research','BETA_PRIVATE');
   assert.equal((await call(`taker/runs/${a.id}`,undefined,cookies[1])).status,404);
   const externalToken='aa'.repeat(32),externalId=crypto.randomUUID();await ok('taker/pair',{id:externalId,tokenHash:keccak256(stringToHex(externalToken)),name:'external'});await ok('taker/pair/approve',{id:externalId},cookies[0]);assert.equal((await call(`taker/runs/${a.id}`,undefined,'',externalToken)).status,404,'external bearer never gets a hosted assignment');
-  await Promise.all([a.runner.alarm(),b.runner.alarm()]);await coordinator.alarm();await coordinator.alarm();
+  assert.deepEqual((await ok('taker/hosted/catalog')).agents,[]);
   const pendingA=a.runner.alarm();await started;
   await b.runner.alarm();await coordinator.alarm();for(let i=0;i<4;i++)await coordinator.alarm();await b.runner.alarm();
   const bState=await ok(`taker/runs/${b.id}`,undefined,cookies[1]);assert.equal(bState.hosted.status,'completed');assert.equal(bState.hosted.metrics.modelRequests,1);assert.equal(bState.hosted.costs.serviceFeeBaseUnits,'0');assert(BigInt(bState.hosted.costs.confirmedGasWei)>0n);assert.equal(bState.owner,accounts[5]!.address.toLowerCase());
   await ok(`taker/runs/${a.id}/revoke`,{},cookies[0]);const stopped=await ok(`taker/runs/${a.id}`,undefined,cookies[0]);assert.equal(stopped.hosted.status,'stopped');assert.equal(stopped.task.status,1,'stop must not pretend to release a chain claim');
   await pendingA;releaseA!(null);const aState=await ok(`taker/runs/${a.id}`,undefined,cookies[0]);assert.equal(aState.resultHash,null);assert.equal(aState.hosted.status,'stopped');assert.equal(db.prepare("SELECT count(*) n FROM platform_commands WHERE id=?").get(`${a.id}:submit`)!.n,0);
   assert(seen.some(c=>c.task.includes('ALPHA_PRIVATE'))&&seen.some(c=>c.task.includes('BETA_PRIVATE')));for(const call of seen){assert(!(call.input.includes('ALPHA_PRIVATE')&&call.input.includes('BETA_PRIVATE')));for(const account of accounts)assert(!call.input.includes(bytesToHex(account.getHdKey().privateKey!)),'model must not receive signing credentials');}
-  const c=await prepare(0,'analysis','RECOVERY_PRIVATE');await c.runner.alarm();await coordinator.alarm();crashRun=c.id;await c.runner.alarm();assert(stores.get(c.id)!.has('execution'));
+  const c=await prepare(0,'analysis','RECOVERY_PRIVATE');crashRun=c.id;await c.runner.alarm();assert(stores.get(c.id)!.has('execution'));
   const recovered=new HostedRunner(contexts.get(c.id),env);await recovered.alarm();await recovered.alarm();await coordinator.alarm();for(let i=0;i<5;i++)await coordinator.alarm();await recovered.alarm();
   const cState=await ok(`taker/runs/${c.id}`,undefined,cookies[0]);assert.equal(cState.hosted.status,'completed');assert.equal(cState.hosted.metrics.executionTries,1);assert.equal(cState.task.attempt,'1');assert.equal(db.prepare('SELECT count(*) n FROM platform_commands WHERE id=?').get(`${c.id}:submit`)!.n,1);
   const d=await prepare(1,'research','FAILURE_PRIVATE');await d.runner.alarm();await coordinator.alarm();await d.runner.alarm();await d.runner.alarm();

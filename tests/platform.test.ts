@@ -50,12 +50,14 @@ test('platform login is nonce-bound; user data and commands are isolated; CSRF a
     assert.equal(db.prepare('SELECT count(*) n FROM platform_intents').get()!.n, 0);
     assert.equal(db.prepare('SELECT count(*) n FROM platform_commands').get()!.n, 0);
     const input = { id: crypto.randomUUID(), goal: '分析最近的测试 USDC 转账并给出复算结果', kind: 'analysis', reward: '50000' };
+    assert.equal((await call('plans', {...input, execution:'platform'}, a)).status, 400);
     assert.equal((await call('plans', input, a)).status, 200);
     assert.equal((await call('plans', input, a)).status, 200);
     assert.equal((await call('plans', { ...input, reward: '60000' }, a)).status, 409);
     assert.equal((await call('plans', input, b)).status, 409);
     assert.equal((await (await call('goals', undefined, b)).json() as any).goals.length, 0);
     assert.equal((await (await call('goals', undefined, a)).json() as any).goals.length, 1);
+    assert.equal((await (await call('goals', undefined, a)).json() as any).goals[0].input.execution, 'market');
     const launch = { id: crypto.randomUUID(), goalId: input.id };
     assert.equal((await call('launch', launch, b)).status, 404);
     assert.equal((await call('launch', launch, a)).status, 202);

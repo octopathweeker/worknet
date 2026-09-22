@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { TakerApiError, type TakerClient, type AssignmentBatch } from './client.js';
 
-type RunClient = Pick<TakerClient, 'run' | 'claim' | 'waitClaim' | 'analyze' | 'upload' | 'submit'> & Partial<Pick<TakerClient,'purchaseTransfers'>>;
+type RunClient = Pick<TakerClient, 'run' | 'claim' | 'waitClaim' | 'analyze' | 'upload' | 'submit'> & Partial<Pick<TakerClient,'purchaseTransfers' | 'progress'>>;
 export type RunOutcome = { state: 'finished' | 'inactive' | 'handler-required' | 'wallet-required' | 'submitted' | 'attention'; detail?: unknown };
 
 /** Reused by one-shot run and watch; always recheck the chain before doing work. */
@@ -23,7 +23,13 @@ export async function executeRun(client: RunClient, runId: string, directory: st
   }
   if (Number(run.task.status) >= 2) return { state: 'finished', detail: run };
   if (Number(run.task.status) !== 1 || run.task.worker.toLowerCase() !== run.owner.toLowerCase() || String(run.task.attempt) !== run.attempt || Number(run.task.claimLeaseExpiresAt) * 1000 <= Date.now()) return { state: 'inactive' };
+  // Reporting is best-effort: a transient progress-service failure must not prevent delivery.
+  const report = async (id: string, summary: string, percent?: number) => {
+    try { await client.progress?.(runId, { id, summary, ...(percent === undefined ? {} : {percent}) }); }
+    catch (error) { console.warn(`Progress report failed for ${runId}: ${String(error)}`); }
+  };
   if (!run.resultHash) {
+    await report('00000000-0000-4000-8000-000000000001', '已确认领取，正在查询并核对指定区块范围内的转账记录。');
     const filename = join(directory, `execution-${runId}${options.paidTools?'-mpp':''}.json`);
     let execution: unknown;
     try { execution = JSON.parse(await readFile(filename, 'utf8')); }
@@ -34,6 +40,7 @@ export async function executeRun(client: RunClient, runId: string, directory: st
       await mkdir(directory, { recursive: true, mode: 0o700 });
       await writeFile(filename, JSON.stringify(execution), { mode: 0o600, flag: 'wx' });
     }
+    await report('00000000-0000-4000-8000-000000000002', '转账分析已完成，正在上传交付结果，随后提交独立审核。', 100);
     await client.upload(runId, execution);
   }
   const submitted = await client.submit(runId);

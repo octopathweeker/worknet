@@ -37,3 +37,7 @@ CREATE TABLE IF NOT EXISTS tool_service_orders (id TEXT PRIMARY KEY, input_hash 
 
 CREATE TABLE IF NOT EXISTS platform_private_reviews (result_hash TEXT PRIMARY KEY, task_id TEXT NOT NULL, attempt TEXT NOT NULL, envelope TEXT NOT NULL, created_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS platform_private_reviews_task ON platform_private_reviews(task_id,attempt);
+
+-- Off-chain execution reports, isolated by run/attempt. Never part of settlement evidence.
+CREATE TABLE IF NOT EXISTS platform_run_progress (sequence INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, id TEXT NOT NULL, summary TEXT NOT NULL, percent INTEGER CHECK(percent BETWEEN 0 AND 100), created_at INTEGER NOT NULL, UNIQUE(run_id,id));
+CREATE INDEX IF NOT EXISTS platform_run_progress_run ON platform_run_progress(run_id,sequence DESC);

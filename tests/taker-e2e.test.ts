@@ -63,6 +63,19 @@ test('external taker permissions, isolated uploads, revoke/takeover and durable 
   assert.equal((await call('setup',{id:crypto.randomUUID(),amount:'50000'},'',tokens[0])).status,401,'executor must never authorize requester budgets');
   await ok(`taker/runs/${runId}/claim`,{},'',tokens[0]);await ok(`taker/runs/${runId}/claim`,{},'',tokens[0]);crash=true;await coordinator.alarm();assert(crashed);coordinator=new PlatformCoordinator(ctx as any,env);db.exec("UPDATE platform_commands SET result=json_remove(result,'$.retryAt') WHERE status='processing'");await coordinator.alarm();
   const task=await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTask',args:[1n]});assert.equal(task.worker.toLowerCase(),taker!.address.toLowerCase());assert.equal(task.attempt,1n);
+  const progressPath=`taker/runs/${runId}/progress`;
+  const update={id:crypto.randomUUID(),summary:'已完成前半区块核对，正在统计剩余转账。',percent:50};
+  assert.equal((await call(progressPath,update,'',tokens[1])).status,404,'another executor cannot report progress');
+  assert.equal((await call(progressPath,{...update,percent:101},'',tokens[0])).status,400);
+  const report=await ok(progressPath,update,'',tokens[0]);
+  assert.deepEqual(await ok(progressPath,update,'',tokens[0]),report,'retry preserves timestamp and creates no duplicate');
+  assert.equal((await call(progressPath,{...update,summary:'changed'},'',tokens[0])).status,409);
+  await coordinator.alarm();
+  const requesterGoals=await ok('goals',undefined,rCookie);
+  assert.deepEqual(requesterGoals.goals.find((g:any)=>g.taskId===taskId).progress,[report]);
+  assert.equal((await ok('goals',undefined,tCookie)).goals.length,0,'a different requester sees no reports');
+  assert.deepEqual((await ok(`taker/runs/${runId}`,undefined,'',tokens[0])).progress,[report]);
+  assert(!JSON.stringify(await ok(`taker/tasks/${taskId}`)).includes(update.summary),'progress must not leak through the public market');
   const permission={...prepared.submitPermission,signature:await taker!.signTypedData(prepared.submitTypedData)};
   const submit=(id:bigint,attempt:bigint,target=manager)=>({target,value:0n,callData:encodeFunctionData({abi:taskManagerAbi,functionName:'submitResult',args:[id,attempt,`0x${'12'.repeat(32)}`,'https://platform.test/objects/test']})});
   for(const bad of [submit(2n,1n),submit(1n,2n),submit(1n,1n,token),{...submit(1n,1n),value:1n},{...submit(1n,1n),callData:encodeFunctionData({abi:taskManagerAbi,functionName:'claimTask',args:[2n]})}])await assert.rejects(client.call({...redeemPermission(permission,[bad]),account:sponsor}),/revert/i);
@@ -71,6 +84,7 @@ test('external taker permissions, isolated uploads, revoke/takeover and durable 
   const invalidUpload=await call(`taker/runs/${runId}/result`,{output:execution.output,provenance:{mode:'llm',sources:[{url:'https://docs.monad.xyz/',fetchedAt:'2026-09-19'}]}},'',tokens[0]);
   assert.equal(invalidUpload.status,400);const invalidBody=await invalidUpload.json() as any;assert.equal(invalidBody.code,'INVALID_INPUT');assert(invalidBody.issues.some((i:any)=>i.field==='provenance.toolVersion'));assert.match(invalidBody.error,/provenance.sources.0.contentHash/);assert.equal(db.prepare('SELECT result_hash FROM platform_runs WHERE id=?').get(runId)!.result_hash,null,'rejected format must not freeze this attempt');
   const upload=await ok(`taker/runs/${runId}/result`,execution,'',tokens[0]);assert.equal((await ok(`taker/runs/${runId}/result`,execution,'',tokens[0])).hash,upload.hash);
+  assert.equal((await call(progressPath,{...update,id:crypto.randomUUID()},'',tokens[0])).status,400,'progress closes once the result is fixed');
   assert.equal((await call(`taker/runs/${runId}/result`,{...execution,output:{eventCount:'1',totalAmountBaseUnits:'0'}},'',tokens[0])).status,409);assert.equal((await call(`taker/runs/${runId}/result`,execution,'',tokens[1])).status,404);
   await ok(`taker/runs/${runId}/submit`,{},'',tokens[0]);await coordinator.alarm();for(let i=0;i<5;i++)await coordinator.alarm();assert.equal((await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTask',args:[1n]})).status,3);
   db.prepare("UPDATE platform_goals SET body=json_set(body,'$.events',json('[]')) WHERE json_extract(body,'$.taskId')='1'").run();
@@ -111,6 +125,9 @@ test('external taker permissions, isolated uploads, revoke/takeover and durable 
     await ok('taker/runs/authorize',{id:watchedId,claimSignature:await taker!.signTypedData(watched.claimTypedData),submitSignature:await taker!.signTypedData(watched.submitTypedData)},tCookie);
     await pending;
     assert(events.some(e=>e.runId===watchedId&&e.state==='submitted'),JSON.stringify(events));
+    const reports=(await ok(`taker/runs/${watchedId}`,undefined,tCookie)).progress;
+    assert.equal(reports.length,2,'built-in runner reports real execution milestones');
+    assert.equal(reports[0].percent,100);
   }finally{stop.abort();await pending;clearInterval(timer);clearTimeout(timeout);await tick;globalThis.fetch=routedFetch;await rm(directory,{recursive:true,force:true});}
   for(let i=0;i<5;i++)await coordinator.alarm();
   assert.equal((await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTask',args:[3n]})).status,3);

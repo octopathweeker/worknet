@@ -1,7 +1,7 @@
 import {z} from 'zod';
 import type {Env} from './index.js';
 export async function marketList(env:Env,params:URLSearchParams,now=Date.now()){
- const filter=z.object({q:z.string().trim().max(100).default(''),capability:z.enum(['all','research.web','analysis.token-transfers']).default('all'),state:z.enum(['all','open','active','ended']).default('all'),sort:z.enum(['recent','reward','deadline']).default('recent')}).parse(Object.fromEntries(params));
+ const filter=z.object({q:z.string().trim().max(100).default(''),capability:z.enum(['all','research.web','analysis.token-transfers','task.general']).default('all'),state:z.enum(['all','open','active','ended']).default('all'),sort:z.enum(['recent','reward','deadline']).default('recent')}).parse(Object.fromEntries(params));
  const where=["json_extract(body,'$.taskId') IS NOT NULL","json_extract(body,'$.input.execution')='market'"];const values:(string|number)[]=[];
  if(filter.q){where.push("instr(lower(json_extract(body,'$.input.goal')),lower(?))>0");values.push(filter.q);}
  if(filter.capability!=='all'){where.push("json_extract(body,'$.spec.capability')=?");values.push(filter.capability);}

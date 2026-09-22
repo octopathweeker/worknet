@@ -28,6 +28,8 @@ function run(args) {
 }
 const wrangler = (...args) => run(['dlx', 'wrangler@4.136.0', ...args]);
 wrangler('whoami');
+// The Worker imports this package's dist exports; rebuild before bundling judges.
+run(['--filter', '@agent-task/judging', 'build']);
 run(['--filter', '@agent-task/explorer', 'build']);
 if (!dryRun) wrangler('d1', 'execute', 'DB', '--remote', '--config', configPath, '--file', 'apps/object-store/platform-schema.sql', '--yes');
 if (toolConfig) {

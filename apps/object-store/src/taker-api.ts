@@ -1,3 +1,5 @@
+import { progressSchema, saveProgress, runProgress } from './task-progress.js';
+import { generalOutput } from '@agent-task/judging';
 import { agentGrant, startAgent, prepareAgent, approveAgent, inspectAgent } from './agent-account.js';
 import { protectResult, reviewResult } from './private-deliveries.js';
 import { validateResultManifest } from '@agent-task/protocol';
@@ -55,7 +57,7 @@ async function runPublic(row: RunRow, wallet: boolean, env: Env) {
   const body = JSON.parse(row.body);
   const hosted = body.hostedAgent || body.previousHostedAgent ? await getHostedJob(env,row.id,row.owner) : null;
   const tools = row.executor_id && body.spec?.capability === 'analysis.token-transfers' && env.MPP_TOOL_CONFIG && env.MPP_PAYER_KEY && env.TOOL_PAYMENTS ? toolPaymentConfigSchema.parse(JSON.parse(env.MPP_TOOL_CONFIG)) : undefined;
-  return { toolPayments: env.MPP_TOOL_CONFIG ? await taskToolPayments(env,row.task_id,row.attempt) : [], hostedAgent: body.hostedAgent ?? null, hosted: hosted?.data ?? null, id: row.id, owner: row.owner, executorId: row.executor_id, taskId: row.task_id, attempt: row.attempt, mode: body.mode, authorized: Boolean(body.authorized), validUntil: body.validUntil, revoked: Boolean(row.revoked), resultHash: row.result_hash, result: row.result_body ? JSON.parse(row.result_body) : null, createdAt: row.created_at,
+  return { progress: await runProgress(env, row.id), toolPayments: env.MPP_TOOL_CONFIG ? await taskToolPayments(env,row.task_id,row.attempt) : [], hostedAgent: body.hostedAgent ?? null, hosted: hosted?.data ?? null, id: row.id, owner: row.owner, executorId: row.executor_id, taskId: row.task_id, attempt: row.attempt, mode: body.mode, authorized: Boolean(body.authorized), validUntil: body.validUntil, revoked: Boolean(row.revoked), resultHash: row.result_hash, result: row.result_body ? JSON.parse(row.result_body) : null, createdAt: row.created_at,
     platformTools: tools ? [{name:'transfers',payer:'platform',currency:'test USDC',decimals:6,maxPerCall:tools.maxPerCall,maxPerTask:tools.maxPerTask,maxPerDay:tools.maxPerDay}] : [],
     ...(wallet ? { permissions: body.claimPermission?.signature !== '0x' && body.claimPermission?.signature ? [body.claimPermission, body.submitPermission] : [] } : {}) };
 }
@@ -74,7 +76,7 @@ export function runHistory(row: RunRow, goal: PlatformGoal, task: { attempt: big
 export async function storeTakerExecution(env: Env, row: RunRow, input: unknown, trustedArtifacts: ResultManifest['artifacts'] = []) {
   const execution = executionSchema.parse(input); const config = platformConfig(env); const client = platformClient(config); const owner = row.owner;
   const { task, spec } = await marketTask(env, row.task_id); const now = (await client.getBlock({ blockTag: 'finalized' })).timestamp;
-  const parsedOutput = (spec.capability === 'research.web' ? researchOutput : transferOutput).safeParse(execution.output);
+  const parsedOutput = (spec.capability === 'task.general' ? generalOutput : spec.capability === 'research.web' ? researchOutput : transferOutput).safeParse(execution.output);
   if (!parsedOutput.success) throw new z.ZodError(parsedOutput.error.issues.map(issue => ({ ...issue, path: ['output', ...issue.path] })));
   const body = JSON.parse(row.body);
   // Owner takeover must recover the same paid evidence after detaching the executor.
@@ -175,6 +177,7 @@ export async function takerApi(request: Request, env: Env): Promise<Response> {
         requested={id:`${hash.slice(0,8)}-${hash.slice(8,12)}-4${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20)}`,taskId,executorId:executor.id,mode:'agent'};
       }
       const input = z.object({ id: idSchema, taskId: taskIdSchema, executorId: idSchema.optional(), hostedAgent: hostedAgentSchema.optional(), mode: z.enum(['wallet','sponsored','agent']) }).strict().refine(input => !(input.executorId && input.hostedAgent), 'Choose one runner').parse(requested);
+      if (input.hostedAgent) throw new Error('HOSTED_DISABLED');
       if(input.mode==='agent'&&!executor)throw new Error('AGENT_GRANT_REQUIRED');
       if (input.executorId && !await executorActive(env, input.executorId, owner)) throw new Error('EXECUTOR_REVOKED');
       const prior = await getRun(env, input.id);
@@ -199,6 +202,7 @@ export async function takerApi(request: Request, env: Env): Promise<Response> {
     if (path === '/runs/authorize' && request.method === 'POST' && !executor) {
       const input = z.object({ id: idSchema, claimSignature: signatureSchema, submitSignature: signatureSchema }).strict().parse(await platformBody(request));
       const row = await getRun(env, input.id); if (!row || row.owner !== owner) throw new Error('NOT_FOUND'); const body = JSON.parse(row.body);
+      if (body.hostedAgent) throw new Error('HOSTED_DISABLED');
       if (body.mode !== 'sponsored' || body.validUntil * 1000 <= Date.now()) throw new Error('GRANT_EXPIRED');
       if (row.executor_id && !await executorActive(env, row.executor_id, owner)) throw new Error('EXECUTOR_REVOKED');
       for (const [permission, signature] of [[body.claimPermission,input.claimSignature],[body.submitPermission,input.submitSignature]] as const) {
@@ -216,12 +220,13 @@ export async function takerApi(request: Request, env: Env): Promise<Response> {
       const rows = await env.DB.prepare(`SELECT json_group_array(json_object('id',id)) items FROM (SELECT id FROM platform_runs WHERE owner=? ${executor ? 'AND executor_id=?' : ''} ORDER BY created_at DESC LIMIT 60)`).bind(...(executor ? [owner,executor.id] : [owner])).first<{ items: string }>();
       return reply({ runs: await Promise.all((JSON.parse(rows?.items ?? '[]') as { id: string }[]).map(async r => runPublic((await getRun(env,r.id))!, !executor, env))) });
     }
-    const match = /^\/runs\/([0-9a-f-]{36})(?:\/(claim|result|submit|revoke|commands|takeover|resume|hosted|tools\/transfers))?$/.exec(path);
+    const match = /^\/runs\/([0-9a-f-]{36})(?:\/(claim|result|submit|progress|revoke|commands|takeover|resume|hosted|tools\/transfers))?$/.exec(path);
     if (match) {
       const row = await getRun(env, match[1]!); if (!row || row.owner !== owner || executor && row.executor_id !== executor.id) throw new Error('NOT_FOUND');
       const operation = match[2]; const body = JSON.parse(row.body);
       if (!operation && request.method === 'GET') { const { task, spec, goal } = await marketTask(env, row.task_id); return reply({ ...await runPublic(row, !executor, env), task, spec, modelUsage: await taskModelUsage(env,row.task_id,row.attempt), ...runHistory(row, goal, task) }); }
-      if (operation === 'hosted' && request.method === 'POST' && !executor) { if (!body.hostedAgent) throw new Error('NOT_FOUND'); return reply({ hosted: await ensureHostedJob(env,row) }); }
+      if (operation === 'claim' && body.hostedAgent) throw new Error('HOSTED_DISABLED');
+      if (operation === 'hosted' && request.method === 'POST') throw new Error('HOSTED_DISABLED');
       if (operation === 'commands' && request.method === 'GET') {
         const rows = await env.DB.prepare("SELECT json_group_array(json_object('id',id,'status',status,'result',json(result))) items FROM platform_commands WHERE owner=? AND id IN (?,?)").bind(owner, `${row.id}:claim`, `${row.id}:submit`).first<{items:string}>();return reply({ commands: JSON.parse(rows?.items ?? '[]') });
       }
@@ -252,6 +257,14 @@ export async function takerApi(request: Request, env: Env): Promise<Response> {
       if (request.method !== 'POST') throw new Error('NOT_FOUND');
       if (row.revoked || !body.authorized || body.validUntil * 1000 <= Date.now()) throw new Error('GRANT_EXPIRED');
       if (row.executor_id && !await executorActive(env,row.executor_id,owner)) throw new Error('EXECUTOR_REVOKED');
+      if (operation === 'progress') {
+        const input = progressSchema.parse(await platformBody(request, 8000));
+        const { task } = await marketTask(env, row.task_id);
+        const now = (await client.getBlock({ blockTag: 'finalized' })).timestamp;
+        if (task.status !== 1 || task.worker.toLowerCase() !== owner || task.attempt.toString() !== row.attempt || now >= task.claimLeaseExpiresAt) throw new Error('PROGRESS_INACTIVE');
+        if (row.result_hash) throw new Error('PROGRESS_INACTIVE');
+        return reply(await saveProgress(env, row, input));
+      }
       if (operation === 'tools/transfers') {
         if (!executor || row.executor_id !== executor.id) throw new Error('UNAUTHORIZED');
         z.object({}).strict().parse(await platformBody(request));
@@ -265,7 +278,7 @@ export async function takerApi(request: Request, env: Env): Promise<Response> {
         return reply(await enqueue(env, owner, `${row.id}:${operation}`, `taker-${operation}`, { runId: row.id }), 202);
       }
       if (operation === 'result') {
-        return reply(await storeTakerExecution(env, row, await platformBody(request, 64000)));
+        return reply(await storeTakerExecution(env, row, await platformBody(request, 128000)));
       }
     }
     throw new Error('NOT_FOUND');
@@ -275,7 +288,7 @@ export async function takerApi(request: Request, env: Env): Promise<Response> {
       return reply({ error: `${path.endsWith('/result') ? '交付 JSON' : '请求内容'}格式不正确：${issues.map(i => `${i.field}：${i.message}`).join('；')}`, code: 'INVALID_INPUT', issues }, 400);
     }
     const code = error instanceof z.ZodError ? 'INVALID_INPUT' : String(error).replace(/^Error: /,'');
-    const errors: Record<string,string> = { HOSTED_QUOTA_ACTIVE:'你已有 2 轮托管执行尚未结束。可先完成或停止其中一轮，再恢复本计划；尚未触发新的领取。', HOSTED_QUOTA_DAILY:'今日已准备 5 轮托管执行，额度在 UTC 零点重置。可选择手工交付或外部执行器。', HOSTED_QUOTA_GLOBAL:'平台托管队列暂时已满，请稍后恢复原准备记录；尚未触发新的领取。', HOSTED_UNAVAILABLE:'此任务的托管 Agent 尚未可用。', HOSTED_MODEL_UNAVAILABLE:'研究模型当前不可用，请稍后重试。', UNAUTHORIZED:'请连接钱包或有效的执行器。', APPROVAL_REQUIRED:'执行器尚未获得用户批准。', PAIR_EXPIRED:'配对已失效，请重新发起。', EXECUTOR_REVOKED:'执行器已撤销或到期。', GRANT_EXPIRED:'任务授权已撤销或到期。', AGENT_ACCOUNT_MISMATCH:'当前登录账户与此 Agent 绑定的账户不同。请使用开户时的原通行密钥登录，不要重新创建账户。', AGENT_GRANT_REQUIRED:'请先完成 Agent 的通行密钥授权；普通配对不能自主领取任务。', AUTHORIZATION_INVALID:'账户激活授权已失效，请在首次设置页面重新确认。', WRONG_DELEGATION:'钱包尚未启用兼容智能账户，请使用钱包确认模式。', TASK_UNAVAILABLE:'任务已被领取或结束，请刷新。', CLAIM_REQUIRED:'仅当前领取者可在有效租约内提交这一轮结果。', RUN_ALREADY_ASSIGNED:'该轮任务已有执行记录，请在我的接单中恢复。', RESULT_CONFLICT:'本轮结果已固定，请恢复原交付，不要替换内容。' };
+    const errors: Record<string,string> = { PROGRESS_CONFLICT:'此进度编号已用于不同内容，请为新进度生成新编号。', PROGRESS_INACTIVE:'仅当前领取者可在有效租约内、上传结果前上报进度。', HOSTED_DISABLED:'平台托管执行已停用，请使用外部 Agent。旧记录可转为钱包接管。', HOSTED_QUOTA_ACTIVE:'你已有 2 轮托管执行尚未结束。可先完成或停止其中一轮，再恢复本计划；尚未触发新的领取。', HOSTED_QUOTA_DAILY:'今日已准备 5 轮托管执行，额度在 UTC 零点重置。可选择手工交付或外部执行器。', HOSTED_QUOTA_GLOBAL:'平台托管队列暂时已满，请稍后恢复原准备记录；尚未触发新的领取。', HOSTED_UNAVAILABLE:'此任务的托管 Agent 尚未可用。', HOSTED_MODEL_UNAVAILABLE:'研究模型当前不可用，请稍后重试。', UNAUTHORIZED:'请连接钱包或有效的执行器。', APPROVAL_REQUIRED:'执行器尚未获得用户批准。', PAIR_EXPIRED:'配对已失效，请重新发起。', EXECUTOR_REVOKED:'执行器已撤销或到期。', GRANT_EXPIRED:'任务授权已撤销或到期。', AGENT_ACCOUNT_MISMATCH:'当前登录账户与此 Agent 绑定的账户不同。请使用开户时的原通行密钥登录，不要重新创建账户。', AGENT_GRANT_REQUIRED:'请先完成 Agent 的通行密钥授权；普通配对不能自主领取任务。', AUTHORIZATION_INVALID:'账户激活授权已失效，请在首次设置页面重新确认。', WRONG_DELEGATION:'钱包尚未启用兼容智能账户，请使用钱包确认模式。', TASK_UNAVAILABLE:'任务已被领取或结束，请刷新。', CLAIM_REQUIRED:'仅当前领取者可在有效租约内提交这一轮结果。', RUN_ALREADY_ASSIGNED:'该轮任务已有执行记录，请在我的接单中恢复。', RESULT_CONFLICT:'本轮结果已固定，请恢复原交付，不要替换内容。' };
     Object.assign(errors,{MPP_AWAITING_FINALITY:'工具付款正在等待链上最终确认，请保留同一执行编号重试。',MPP_PREVIOUS_PAYMENT_PENDING:'前一笔工具付款尚未确认，请稍后重试原执行。',MPP_TASK_INACTIVE:'任务未领取、已结束或授权失效，不能购买工具。',MPP_EXECUTOR_INACTIVE:'执行器已撤销、到期或与任务不匹配。',MPP_NOT_CONFIGURED:'平台工具采购尚未配置。',MPP_BUDGET_LIMIT:'平台工具额度不足，请稍后重试原任务。',MPP_RESULT_MISMATCH:'交付与已采购的工具结果不一致，请上传原工具输出及来源记录。',MPP_UNSUPPORTED_CAPABILITY:'本接口仅支持当前任务指定的链上转账分析。'});
     return reply({ error: errors[code] ?? '操作未完成，请刷新状态并重试原操作。', code: /^[A-Z_]+$/.test(code) ? code : 'REQUEST_FAILED' }, ['MPP_AWAITING_FINALITY','MPP_PREVIOUS_PAYMENT_PENDING','MPP_UNAVAILABLE'].includes(code) ? 503 : /NOT_FOUND/.test(code) ? 404 : code === 'UNAUTHORIZED' ? 401 : /REVOKED|APPROVAL_REQUIRED|GRANT_EXPIRED/.test(code) ? 403 : /CONFLICT|ASSIGNED|UNAVAILABLE/.test(code) ? 409 : code === 'RATE_LIMIT' || code.startsWith('HOSTED_QUOTA') ? 429 : 400);
   }

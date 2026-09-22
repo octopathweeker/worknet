@@ -3,12 +3,12 @@ import { createPublicClient, http, keccak256, stringToHex, type Address, type He
 import { privateKeyToAccount } from 'viem/accounts';
 import { taskManagerAbi } from '@agent-task/contracts';
 import { parseJsonStrict } from '@agent-task/protocol/json';
-import { scoreCompletion, judgeOutput, validateBinding, verdictTypedData, type JudgeRequest, type JudgeVerdict } from '@agent-task/judging';
+import { generalOutput, intentSchema, scoreCompletion, judgeOutput, validateBinding, verdictTypedData, type JudgeRequest, type JudgeVerdict } from '@agent-task/judging';
 import { z } from 'zod';
 
 export interface JudgeEnv { EVALUATIONS: DurableObjectNamespace; JUDGE_CONFIG: string; JUDGE_PRIVATE_KEY: Hex; JUDGE_SERVICE_TOKEN: string; OPENROUTER_API_KEY?: string; MODEL_GATEWAY?: { fetch(request: Request): Promise<Response> }; MODEL_GATEWAY_TOKEN?: string; JUDGE_ID: string; JEV_MODEL?: string; }
 const json = (value: unknown, status=200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
-async function bounded(request: Request, limit=256000) {
+async function bounded(request: Request, limit=512000) {
   if (!request.body) throw new Error('INVALID_BODY');
   const reader=request.body.getReader(); const decoder=new TextDecoder('utf-8',{fatal:true}); let value=''; let size=0;
   try { while(true) { const {done,value:bytes}=await reader.read(); if(done) break; size+=bytes.length; if(size>limit){await reader.cancel();throw new Error('BODY_LIMIT');} value+=decoder.decode(bytes,{stream:true}); } return value+decoder.decode(); }
@@ -61,7 +61,7 @@ export class JudgeEvaluation {
       const cached=await this.ctx.storage.get<JudgeVerdict>('verdict'); if(cached)return json(cached);
       const tries=await this.ctx.storage.get<number>('attempts')??0;if(tries>=4)return json({error:'EVALUATION_RETRY_LIMIT'},503);
       await this.ctx.storage.put('attempts',tries+1);
-      const evidence=await researchEvidence(payload);
+      const evidence=payload.spec.capability === 'task.general' ? generalEvidence(payload) : await researchEvidence(payload);
       const gateway=this.env.MODEL_GATEWAY;
       const score=await scoreCompletion(payload,{apiKey:this.env.OPENROUTER_API_KEY??'',judgeId:this.env.JUDGE_ID,model:this.env.JEV_MODEL??'jev-1.13',endpoint:'https://openrouter.ai/api/v1/systemone',evidence,...(gateway?{fetch:async (_url:unknown,init?:RequestInit)=>gateway.fetch(new Request('https://model/internal/jev',{...init,headers:{'content-type':'application/json',authorization:`Bearer ${this.env.MODEL_GATEWAY_TOKEN}`}}))}:{})});
       const signature=await account.signTypedData(verdictTypedData(c.chainId,c.manager,BigInt(payload.taskId),BigInt(payload.attempt),payload.resultHash,score.completionBps));
@@ -88,4 +88,20 @@ export async function researchEvidence(payload: JudgeRequest) {
     const s=verified.find(s=>s.uri===f.sourceUri);const found=s?.text.indexOf(f.quote)??-1;
     return {...f,quoteVerified:found>=0,context:found>=0?s!.text.slice(Math.max(0,found-700),found+f.quote.length+700):null};
   }),sourceCoverage:sources.map(uri=>({uri,covered:output.findings.some(f=>f.sourceUri===uri)})),sources:verified.map(({uri,hash})=>({uri,contentHash:hash})) };
+}
+
+/** General delivery is judged against its committed intent. Agent references are not fetched. */
+export function generalEvidence(payload: JudgeRequest) {
+  if (payload.spec.capability !== 'task.general') throw new Error('UNSUPPORTED_CAPABILITY');
+  const intent = payload.spec.input.intent as Record<string, unknown> | undefined;
+  if (!intent) throw new Error('INTENT_INVALID');
+  const { deliverable, acceptanceCriteria, ...core } = intent;
+  intentSchema.parse(core);
+  z.string().min(1).max(1000).parse(deliverable);
+  z.array(z.string().min(1).max(300)).min(1).max(8).parse(acceptanceCriteria);
+  const output = generalOutput.parse(judgeOutput(payload));
+  return { mode: 'intent-and-deliverable', referencesIndependentlyVerified: false,
+    notice: 'Evaluate the committed intent and delivered content. Sources are agent-supplied references, not independently fetched evidence. Do not equate a cited URL with verification of the claim or completion of an external action.',
+    references: output.sources.map(source => ({ ...source, independentlyVerified: false })),
+  };
 }

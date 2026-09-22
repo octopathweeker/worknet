@@ -118,6 +118,15 @@ test('two-user cloud coordinator survives signed transaction crash and settles i
     db.exec("UPDATE platform_commands SET result=json_remove(result,'$.retryAt') WHERE status='processing'");
     for (let i = 0; i < 24; i++) {
       await coordinator.alarm();
+      for (const row of db.prepare("SELECT id,body FROM platform_goals WHERE json_extract(body,'$.task.status')=0 AND json_extract(body,'$.taskId') IS NOT NULL").all()) {
+        const legacy=JSON.parse(String(row.body)); if(legacy.id===blockedGoal?.id) continue;
+        const task=await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTask',args:[BigInt(legacy.taskId)]});
+        if(task.status!==0) continue;
+        assert(![...memory.keys()].some(k=>k.startsWith(`tx:worker:claim:${legacy.taskId}:`)), 'coordinator must never claim');
+        await client.waitForTransactionReceipt({hash:await wallets[2]!.writeContract({address:manager,abi:taskManagerAbi,functionName:'claimTask',args:[BigInt(legacy.taskId)]})});
+        legacy.input.execution='platform'; // Historical, already claimed work drains after retirement.
+        db.prepare('UPDATE platform_goals SET body=? WHERE id=?').run(JSON.stringify(legacy),row.id!);
+      }
       if (!quotaInjected && db.prepare("SELECT count(*) n FROM platform_goals WHERE json_extract(body,'$.task.status') IN (1,2,3)").get()!.n === 2) {
         memory.set(`gas:${new Date().toISOString().slice(0,10)}`, '3000000000000000000'); quotaInjected = true;
         const blocked = {...expired, id: crypto.randomUUID(), spec: undefined}; blocked.input = {...blocked.input, id: blocked.id, execution: 'market'}; blockedGoal = blocked; quotaCommand = crypto.randomUUID(); followupCommand = crypto.randomUUID();

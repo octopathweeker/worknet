@@ -71,16 +71,8 @@ export class HostedRunner {
       if(task.status>=4||history.superseded){await this.costs(data,run,history.events);const rejected=history.evidence?.verdict==='reject';await this.state(data,rejected?'rejected':'expired',rejected?'独立审核拒绝了本轮交付；如继续，需准备新一轮领取。':'本轮已结束或租约已释放；没有继续提交旧结果。',false);return;}
       const now=(await platformClient(platformConfig(this.env)).getBlock({blockTag:'finalized'})).timestamp;
       if(BigInt(grant.validUntil)<=now||task.taskDeadline<=now){await this.state(data,'expired','本轮授权或任务已到期，托管执行已停止。',false);return;}
+      if(task.status===0){await this.state(data,'stopped','平台托管执行已停用，请使用外部 Agent 接单。',false);return;}
       if(!grant.authorized){await this.state(data,'waiting_authorization','等待本轮钱包授权。');return;}
-      if(task.status===0){
-        if(String(task.attempt+1n)!==run.attempt)throw new Error('HOSTED_ATTEMPT_CHANGED');
-        if(grant.mode==='sponsored'){
-          const command=await enqueue(this.env,run.owner,`${run.id}:claim`,'taker-claim',{runId:run.id});
-          if(command.status==='failed')throw new Error('HOSTED_CLAIM_FAILED');
-          await this.state(data,'waiting_claim','已请求领取，等待链上确认；确认后开始云端执行。');
-        }else await this.state(data,'waiting_claim','等待你的钱包确认领取；平台尚未开始计算。');
-        return;
-      }
       if(task.worker.toLowerCase()!==run.owner||String(task.attempt)!==run.attempt)throw new Error('HOSTED_ATTEMPT_CHANGED');
       if(task.status===2){await this.costs(data,run,history.events);await this.state(data,'reviewing','结果已提交链上，等待 requester 独立审核。');return;}
       if(task.status!==1)throw new Error('HOSTED_ATTEMPT_CHANGED');

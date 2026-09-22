@@ -35,12 +35,18 @@ export function meraMetadata(): Metadata | undefined {
 export function lockMera() { session?.end(); session = undefined; expires = 0; if(timer)clearTimeout(timer); }
 if (typeof window !== 'undefined') window.addEventListener('pagehide',lockMera);
 
+function createPasskeyUser() {
+  const name = `Worknet ${new Date().toLocaleString()} · ${crypto.randomUUID().slice(0,8)}`;
+  // Providers may show either field when selecting a discoverable passkey.
+  return { name, displayName: name };
+}
+
 export async function enterMera(mode: 'create' | 'signin', expected?: Address) {
   if (!globalThis.isSecureContext || typeof navigator.credentials?.get !== 'function') throw new Error('MERA_UNSUPPORTED');
   lockMera();
   const rpId = location.hostname;
   const result = mode === 'create'
-    ? await createPasskeyWithPrfOutput({ rp: { id: rpId, name: 'Worknet' }, user: { name: `Worknet ${new Date().toLocaleDateString()}`, displayName: 'Worknet' }, prfSalt: accountSalt })
+    ? await createPasskeyWithPrfOutput({ rp: { id: rpId, name: 'Worknet' }, user: createPasskeyUser(), prfSalt: accountSalt })
     : await getPasskeyPrfOutput({ rpId, prfSalt: accountSalt, ...(expected && meraMetadata() ? { credential: meraMetadata()!.credential } : {}) });
   let key: Uint8Array | undefined;
   try {

@@ -19,6 +19,12 @@ try {
  else if(command==='runs'){print(await (await configuredClient()).runs());}
  else if(command==='get'){print(await (await configuredClient()).run(id()));}
  else if(command==='claim'){print(await (await configuredClient()).claim(id()));}
+ else if(command==='progress'){
+  if(!args[1]||!args[2])throw new Error('progress <run-id> <update-uuid> <summary> [percent]');
+  const percent=args[3]===undefined?undefined:Number(args[3]);
+  if(percent!==undefined&&(!Number.isInteger(percent)||percent<0||percent>100))throw new Error('Percent must be an integer from 0 to 100');
+  print(await (await configuredClient()).progress(id(),{id:args[1],summary:args[2],...(percent===undefined?{}:{percent})}));
+ }
  else if(command==='submit'){print(await (await configuredClient()).submit(id()));}
  else if(command==='tool'){print(await (await configuredClient()).purchaseTransfers(id()));}
  else if(command==='upload'){if(!args[1])throw new Error('upload <run-id> <execution.json>');const bytes=await readFile(args[1]);if(bytes.length>64000)throw new Error('Execution exceeds upload limit');print(await (await configuredClient()).upload(id(),JSON.parse(bytes.toString())));}
@@ -33,5 +39,5 @@ try {
   } finally {process.removeListener('SIGINT',stop);process.removeListener('SIGTERM',stop);}
  }
  else if(command==='run'){const result=await executeRun(await configuredClient(),id(),dirname(configPath()),{paidTools:args.includes('--paid-tool')});print(result.detail??result);}
- else {console.log('worknet-taker init <origin> [name] | renew | take <task-id> | pair <origin> [name] | status | tasks | runs | wait [cursor] | watch [--paid-tool] | get <run> | claim <run> | run <run> [--paid-tool] | tool <run> | upload <run> <execution.json> | submit <run> | mcp\n--paid-tool and tool may spend the platform tool budget within its configured limits. Default analysis stays local and read-only.\nWORKNET_TAKER_CONFIG selects a private local credential file. Agent mode stores a restricted local execution key; the Mera account key remains with the Passkey.');}
+ else {console.log('worknet-taker init <origin> [name] | renew | take <task-id> | pair <origin> [name] | status | tasks | runs | wait [cursor] | watch [--paid-tool] | get <run> | claim <run> | run <run> [--paid-tool] | tool <run> | progress <run> <update-uuid> <summary> [percent] | upload <run> <execution.json> | submit <run> | mcp\n--paid-tool and tool may spend the platform tool budget within its configured limits. Default analysis stays local and read-only.\nWORKNET_TAKER_CONFIG selects a private local credential file. Agent mode stores a restricted local execution key; the Mera account key remains with the Passkey.');}
 }catch(e){console.error(String(e));process.exitCode=1;}

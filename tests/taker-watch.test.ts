@@ -21,6 +21,7 @@ test('MCP distinguishes a platform-paid purchase from read-only transfer analysi
  const [clientTransport,serverTransport]=InMemoryTransport.createLinkedPair();
  try{await server.connect(serverTransport);await client.connect(clientTransport);const {tools}=await client.listTools();
   const paid=tools.find(tool=>tool.name==='taker_purchase_transfers')!;assert(paid);assert.equal(paid.annotations?.readOnlyHint,false);assert.equal(paid.annotations?.idempotentHint,true);assert.deepEqual(Object.keys(paid.inputSchema.properties!),['runId']);assert.equal(tools.find(tool=>tool.name==='taker_analyze_transfers')!.annotations?.readOnlyHint,true);
+  const progress=tools.find(tool=>tool.name==='taker_report_progress')!;assert(progress);assert.equal(progress.annotations?.readOnlyHint,false);assert.equal(progress.annotations?.idempotentHint,true);assert.deepEqual(progress.inputSchema.required,['runId','updateId','summary']);
  }finally{await client.close();await server.close();}
 });
 

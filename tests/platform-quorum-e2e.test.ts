@@ -14,6 +14,7 @@ import { PlatformCoordinator } from '../apps/object-store/src/platform-coordinat
 import { makeTask, taskParams } from '../apps/object-store/src/platform-domain.js';
 import { internalModel } from '../apps/object-store/src/internal-model.js';
 import judgeWorker, { JudgeEvaluation, type JudgeEnv } from '../apps/judge-worker/src/index.js';
+import { storeTakerExecution, type RunRow } from '../apps/object-store/src/taker-api.js';
 import type { Env } from '../apps/object-store/src/index.js';
 
 function context(memory=new Map<string,unknown>(), crash?: (entries:Record<string,any>)=>void) {
@@ -50,10 +51,12 @@ test('cloud quorum resumes settlement, survives one offline peer and reconciles 
       const url=String(input);
       if(url.startsWith('https://quorum-rpc.test')){const body=JSON.parse(String(init?.body));if(body.method==='eth_getBlockByNumber'&&body.params[0]==='finalized')body.params[0]='latest';if(body.method==='eth_call'&&body.params[1]==='finalized')body.params[1]='latest';return nativeFetch(rpc,{...init,body:JSON.stringify(body)});}
       if(url.startsWith('https://docs.monad.xyz/'))return new Response('This is an independently retrieved source passage supporting the task.');
+      if(url.startsWith('https://www.gotokyo.org'))throw new Error('General reference must not be fetched as verified evidence');
       if(url==='https://openrouter.ai/api/v1/systemone'){
         assert.equal(new Headers(init?.headers).get('authorization'),'Bearer fake-existing-key');modelCalls++;
         if(overload){overload=false;return new Response('{}',{status:429});}
         const body=JSON.parse(String(init?.body));const id=body.questions.completion.instructions.judge;
+        if(body.state.task.intent){assert.equal(body.state.task.intent.objective,'东京 5 日游攻略');assert.equal(body.state.evidence.referencesIndependentlyVerified,false);assert.equal(body.state.submission.format,'markdown');assert(body.state.task.criteria.includes('覆盖五天行程。'));}
         return new Response(JSON.stringify({model:'typesafe/jev-1.13',answers:{completion:{type:'score',score:{'judge-1':4,'judge-2':3,'judge-3':2}[id as string]}}}));
       }
       return nativeFetch(input,init);
@@ -67,14 +70,26 @@ test('cloud quorum resumes settlement, survives one offline peer and reconciles 
     const unavailable=await judgeWorker.fetch(new Request('https://judge/evaluate',{method:'POST',body:'{}'}),peers[0]!);assert.equal(unavailable.status,401);
     for(let n=1;n<=3;n++){
       const goal:any={id:crypto.randomUUID(),owner:accounts[3]!.address.toLowerCase(),vault:vault.toLowerCase(),input:{goal:'Check the provided source and summarize the supported fact.',kind:'research',reward:'50000',execution:'market'},createdAt:new Date().toISOString(),status:'running'};
+      if(n===2)goal.input={...goal.input,kind:'general',goal:'东京 5 日游攻略，安排逐日路线和交通。',agreement:{deliverable:'可执行的五日游文档',acceptanceCriteria:['覆盖五天行程。','注明交通和费用估算。'],intent:{version:'worknet-intent/1',objective:'东京 5 日游攻略',constraints:['不用预订或付款。'],assumptions:['未指定日期，提供通用线路。'],evidenceRequirements:['对时效性信息提供来源和估算说明。']}}};
+      const claimant=n===2?4:2;
       const head=await client.getBlock();goal.spec=makeTask(goal,config,Number(head.timestamp),head.number);
       await confirmed(await wallets[1]!.writeContract({address:vault,abi:requesterVaultAbi,functionName:'createTask',args:[goal.spec.clientRequestId,taskParams(goal.spec,config.storageUrl)]}));
       const id=await client.readContract({address:manager,abi:taskManagerAbi,functionName:'getTaskByRequestId',args:[vault,goal.spec.clientRequestId]});goal.taskId=id.toString();
-      await confirmed(await wallets[2]!.writeContract({address:manager,abi:taskManagerAbi,functionName:'claimTask',args:[id]}));
-      const specHash=hashJson(goal.spec);const result={protocol:'agent-task/0.1',settlementChainId:'10143',taskManager:manager.toLowerCase(),taskId:id.toString(),attempt:'1',worker:accounts[2]!.address.toLowerCase(),specHash,output:{summary:'A supported summary.',findings:[{title:'Fact',claim:'Source supports the task.',sourceUri:goal.spec.input.sourceUrls[0],quote:'This is an independently retrieved source passage supporting the task.'}]},artifacts:[],provenance:{}};
-      const resultHash=hashJson(result);db.prepare('INSERT INTO objects(hash,body,created_at) VALUES (?,?,0)').run(resultHash,canonicalJson(result));
-      await confirmed(await wallets[2]!.writeContract({address:manager,abi:taskManagerAbi,functionName:'submitResult',args:[id,1n,resultHash,`${config.storageUrl}/objects/${resultHash}`]}));
-      db.prepare('INSERT INTO platform_goals(id,owner,body,active,updated_at) VALUES (?,?,?,1,0)').run(goal.id,goal.owner,JSON.stringify(goal));
+      await confirmed(await wallets[claimant]!.writeContract({address:manager,abi:taskManagerAbi,functionName:'claimTask',args:[id]}));
+      const specHash=hashJson(goal.spec);let result:any={protocol:'agent-task/0.1',settlementChainId:'10143',taskManager:manager.toLowerCase(),taskId:id.toString(),attempt:'1',worker:accounts[claimant]!.address.toLowerCase(),specHash,output:{summary:'A supported summary.',findings:[{title:'Fact',claim:'Source supports the task.',sourceUri:goal.spec.input.sourceUrls?.[0],quote:'This is an independently retrieved source passage supporting the task.'}]},artifacts:[],provenance:{}};
+      let resultHash=hashJson(n===2?{}:result);
+      if(n===2){
+        result.output={format:'markdown',content:'# 东京 5 日游\n第 1 天：浅草。\n第 2 天：上野。\n第 3 天：涩谷。\n第 4 天：新宿。\n第 5 天：台场。\n费用与交通仍需补全；本交付只完成部分验收项。',sources:[{title:'东京旅游官网',url:'https://www.gotokyo.org/en/'}]};
+        db.prepare('INSERT INTO platform_goals(id,owner,body,active,updated_at) VALUES (?,?,?,1,0)').run(goal.id,goal.owner,JSON.stringify(goal));
+        const runId=crypto.randomUUID(),owner=accounts[claimant]!.address.toLowerCase();
+        db.prepare('INSERT INTO platform_runs(id,owner,task_id,attempt,body,created_at) VALUES (?,?,?,?,?,0)').run(runId,owner,id.toString(),'1',JSON.stringify({specHash,mode:'wallet',authorized:true}));
+        const row=db.prepare('SELECT * FROM platform_runs WHERE id=?').get(runId) as unknown as RunRow;
+        await assert.rejects(storeTakerExecution(env,row,{output:{format:'markdown',content:' ',sources:[]},provenance:{toolVersion:'test-agent/1'}}));
+        const stored=await storeTakerExecution(env,row,{output:result.output,provenance:{toolVersion:'test-agent/1'}});resultHash=stored.hash;
+        result=JSON.parse(String(db.prepare('SELECT body FROM objects WHERE hash=?').get(resultHash)!.body));
+      }else db.prepare('INSERT INTO objects(hash,body,created_at) VALUES (?,?,0)').run(resultHash,canonicalJson(result));
+      await confirmed(await wallets[claimant]!.writeContract({address:manager,abi:taskManagerAbi,functionName:'submitResult',args:[id,1n,resultHash,`${config.storageUrl}/objects/${resultHash}`]}));
+      db.prepare('INSERT OR REPLACE INTO platform_goals(id,owner,body,active,updated_at) VALUES (?,?,?,1,0)').run(goal.id,goal.owner,JSON.stringify(goal));
       if(n===3){
         await confirmed(await wallets[3]!.writeContract({address:vault,abi:requesterVaultAbi,functionName:'acceptResult',args:[id,1n,resultHash]}));
         const key=`tx:operator:quorum-settle:${id}:1:${resultHash}`;
@@ -108,7 +123,8 @@ test('cloud quorum resumes settlement, survives one offline peer and reconciles 
       assert.equal(finished.settlement.workerAmount,n===1?'37500':'25000');assert.equal(finished.settlement.refundAmount,n===1?'12500':'25000');assert.equal(finished.evidence.verdict,'scored');
       const logs=await client.getContractEvents({address:manager,abi:taskManagerAbi,eventName:'VerdictSettled',args:{taskId:id},fromBlock:0n});assert.equal(logs.length,1,'restart never settles twice');
     }
-    assert(crashed);assert.equal(await client.readContract({address:token,abi:erc20Abi,functionName:'balanceOf',args:[accounts[2]!.address]}),112500n);
+    assert(crashed);assert.equal(await client.readContract({address:token,abi:erc20Abi,functionName:'balanceOf',args:[accounts[2]!.address]}),87500n);
+    assert.equal(await client.readContract({address:token,abi:erc20Abi,functionName:'balanceOf',args:[accounts[4]!.address]}),25000n);
     assert.equal(await client.readContract({address:token,abi:erc20Abi,functionName:'balanceOf',args:[vault]}),887500n);
   }finally{globalThis.fetch=nativeFetch;db.close();anvil.kill('SIGTERM');await new Promise<void>(r=>anvil.once('exit',()=>r()));}
 });

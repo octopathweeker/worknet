@@ -9,7 +9,7 @@ import {createPublicClient,createWalletClient,http,erc20Abi,bytesToHex,parseAbi,
 import {monadTestnet} from 'viem/chains';
 import {mnemonicToAccount} from 'viem/accounts';
 import {factoryAbi} from '@agent-task/accounts';
-import {requesterVaultAbi} from '@agent-task/contracts';
+import {requesterVaultAbi,taskManagerAbi} from '@agent-task/contracts';
 import {deliverySalt,deliveryPrivateKey,deliveryPublicKey,deliveryContext,isPrivateOutput,openJson,verifiedOpening} from '@agent-task/privacy';
 import {PlatformCoordinator} from '../apps/object-store/src/platform-coordinator.js';
 import {platformApi} from '../apps/object-store/src/platform-api.js';
@@ -51,10 +51,10 @@ test('Mera signing account funds its Vault and platform settles a private task w
   const login=await api('auth/verify',{id:challenge.id,signature:await owner.signMessage({message:challenge.message})});assert.equal(login.status,200);const cookie=login.headers.get('set-cookie')!.split(';')[0]!;
   const config=await(await api('config')).json()as any;const key=deliveryPrivateKey(new Uint8Array(32).fill(6));const id=crypto.randomUUID();
   const delivery={scheme:'worknet-delivery/1',rpId:'platform.test',salt:deliverySalt('platform.test',owner.address,id),publicKey:deliveryPublicKey(key),reviewPublicKey:config.privacy.reviewPublicKey};
-  const plan=await api('plans',{id,goal:'独立统计指定区间的转账，交付私有报告。',kind:'analysis',execution:'platform',reward:'50000',fromBlock:'1',toBlock:'2',delivery},cookie);assert.equal(plan.status,200,JSON.stringify(await plan.json()));
+  const plan=await api('plans',{id,goal:'独立统计指定区间的转账，交付私有报告。',kind:'analysis',execution:'market',reward:'50000',fromBlock:'1',toBlock:'2',delivery},cookie);assert.equal(plan.status,200,JSON.stringify(await plan.json()));
   assert.equal((await api('launch',{id:crypto.randomUUID(),goalId:id},cookie)).status,202);
   let goal:any;
-  for(let i=0;i<16;i++){await coordinator.alarm();const page=await(await api('goals',undefined,cookie)).json()as any;goal=page.goals.find((g:any)=>g.id===id);if(goal?.task?.status===3)break;}
+  for(let i=0;i<16;i++){await coordinator.alarm();const page=await(await api('goals',undefined,cookie)).json()as any;goal=page.goals.find((g:any)=>g.id===id);if(goal?.task?.status===0){const legacyWallet=createWalletClient({chain:monadTestnet,account:roles[2]!,transport:http(rpc)});await client.waitForTransactionReceipt({hash:await legacyWallet.writeContract({address:manager,abi:taskManagerAbi,functionName:'claimTask',args:[BigInt(goal.taskId)]})});goal.input.execution='platform';db.prepare('UPDATE platform_goals SET body=? WHERE id=?').run(JSON.stringify(goal),id);}if(goal?.task?.status===3)break;}
   assert.equal(goal?.task?.status,3,JSON.stringify(goal));assert.equal(goal.evidence.verdict,'accept');assert(isPrivateOutput(goal.result.output));
   const opening=await openJson(goal.result.output.envelope,key,deliveryContext(goal.result));const output=verifiedOpening(goal.result.output,opening) as any;assert.equal(output.eventCount,'0');key.fill(0);
   const object=JSON.parse(db.prepare('SELECT body FROM objects WHERE hash=?').get(goal.task.resultHash)!.body as string);assert(isPrivateOutput(object.output));assert.equal(object.output.eventCount,undefined);

@@ -1,9 +1,11 @@
+import { attachGoalProgress } from './task-progress.js';
 import { taskToolPayments } from './tool-payments.js';
 import { reviewPublicKey } from './private-deliveries.js';
 import { deliverySalt } from '@agent-task/privacy';
 import { quorumAvailable } from './platform-quorum.js';
 import {platformActivity,markActivityRead} from './platform-activity.js';
 import { generationAvailable, freeModels } from './model-gateway.js';
+import { briefInputSchema, prepareBrief } from './platform-brief.js';
 import { createPublicClient, http, encodeFunctionData, erc20Abi, keccak256, stringToHex, recoverMessageAddress, recoverTypedDataAddress, type Address, type Hex } from 'viem';
 import { monadTestnet } from 'viem/chains';
 import { createSiweMessage } from 'viem/siwe';
@@ -151,16 +153,29 @@ export async function platformApi(request: Request, env: Env): Promise<Response>
     if (url.pathname === '/platform/goals' && request.method === 'GET') {
       const row = await env.DB.prepare("SELECT json_group_array(json(body)) AS items FROM (SELECT json_set(g.body,'$.publication',json((SELECT json_object('id',c.id,'status',c.status,'error',json_extract(c.result,'$.error')) FROM platform_commands c WHERE c.owner=g.owner AND c.type='launch' AND json_extract(c.payload,'$.goalId')=g.id ORDER BY c.created_at DESC,c.rowid DESC LIMIT 1))) AS body FROM platform_goals g WHERE g.owner=? ORDER BY g.updated_at DESC LIMIT 60)").bind(owner).first<{ items: string }>(); const goals = JSON.parse(row?.items ?? '[]');
       if(env.MPP_TOOL_CONFIG) await Promise.all(goals.filter((g: any)=>g.taskId&&g.task?.attempt).map(async(g: any)=>{g.toolPayments=await taskToolPayments(env,g.taskId,String(g.task.attempt));}));
+      await attachGoalProgress(env, owner, goals);
       return reply({ goals });
     }
+    if (url.pathname === '/platform/brief' && request.method === 'POST') {
+      const input = briefInputSchema.parse(await platformBody(request, 64000));
+      await platformRate(env, `brief:${owner}`, 20, 86400000);
+      return reply(await prepareBrief(input, env, owner));
+    }
     if (url.pathname === '/platform/plans' && request.method === 'POST') {
-      const input = planSchema.parse(await platformBody(request));
+      const input = planSchema.parse(await platformBody(request, 64000));
+      if (input.execution === 'platform') return reply({ error: '平台执行器已停用，请将任务改为开放接单。' }, 400);
+      input.execution = 'market';
+      if (input.kind === 'general' && (!quorumAvailable(env, config) || config.quorum!.threshold < 2)) throw new Error('JUDGE_QUORUM_UNAVAILABLE');
       if (input.delivery && (input.delivery.rpId !== url.hostname || input.delivery.salt !== deliverySalt(url.hostname,owner,input.id) || input.delivery.reviewPublicKey !== reviewPublicKey(env))) throw new Error('PRIVATE_DELIVERY_CONFIG_INVALID');
       if (input.kind === 'research') { if (!generationAvailable(env) || (config.quorum ? !quorumAvailable(env, config) : !env.AI || !env.PLATFORM_JUDGE_MODEL)) throw new Error('MODEL_UNAVAILABLE'); (input.sourceUrls ?? []).forEach(researchUrl); }
       if (input.fromBlock && input.toBlock && (BigInt(input.fromBlock) > BigInt(input.toBlock) || BigInt(input.toBlock) - BigInt(input.fromBlock) > 1000n)) throw new Error('INVALID_BLOCK_RANGE');
       const previous = await env.DB.prepare('SELECT owner,body FROM platform_goals WHERE id=?').bind(input.id).first<{ owner: string; body: string }>();
       if (previous) { const goal = JSON.parse(previous.body); if (previous.owner !== owner || hashJson(goal.input) !== hashJson(input)) throw new Error('REQUEST_CONFLICT'); return reply(goal); }
       await platformRate(env, `plans:${owner}`, 50, 86400000);
+      // The user is confirming an existing agreement. Validate its schema above and
+      // persist it verbatim; generating it again makes saving depend on model output
+      // and can silently contradict the terms the user just reviewed. Jev evaluates
+      // the delivered work against this committed agreement after submission.
       const goal: PlatformGoal = { id: input.id, owner, vault: user.vault, input, createdAt: new Date().toISOString(), status: 'draft' };
       await env.DB.prepare('INSERT INTO platform_goals(id,owner,body,updated_at) VALUES (?,?,?,?)').bind(input.id, owner, serialize(goal), Date.now()).run(); return reply(goal);
     }
