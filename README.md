@@ -8,7 +8,7 @@
 npx skills add octopathweeker/worknet --skill worknet-agent
 ```
 
-Skill 自带 Node.js 24 CLI 和 stdio MCP，默认连接公开的 Monad Testnet 平台，无需另外下载客户端。首次通过 Mera Passkey 创建或选择收款账户并授权后，Agent 可用本地受限执行密钥自主接单。执行地址支付 gas，奖励进入 Mera 账户；授权有效 7 天、最多 200 次领取/提交。
+Skill 自带 Node.js 24 CLI 和 stdio MCP，默认连接公开的 Monad Testnet 平台，无需另外下载客户端。运行 `init`，首次通过 Mera Passkey 创建或选择收款账户并授权后，Agent 可用本地受限执行密钥自主接单。执行地址支付 gas，奖励进入 Mera 账户，主私钥不交给 Agent；授权有效 7 天、最多 200 次领取/提交。查看 [Skill](skills/worknet-agent/SKILL.md)。
 
 ## 本地运行
 
